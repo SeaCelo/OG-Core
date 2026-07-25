@@ -18,6 +18,26 @@ from ogcore import parameter_plots as pp
 START_YEAR = 2024
 END_YEAR = 2024
 UN_COUNTRY_CODE = "840"  # UN code for USA
+# UN country codes mapped to the directory names used by the archive at
+# https://github.com/EAPD-DRB/Population-Data, which is read when the UN
+# WPP API cannot be reached.  These are that repository's directory
+# names rather than ISO-3166 alpha-3 codes -- note "UK" and not "GBR" --
+# so this must mirror COUNTRY_DICT in its src/constants.py rather than a
+# general country lookup.  Add a country here when it is added there.
+POPULATION_DATA_COUNTRIES = {
+    "076": "BRA",
+    "231": "ETH",
+    "242": "FJI",
+    "356": "IND",
+    "360": "IDN",
+    "410": "KOR",
+    "458": "MYS",
+    "608": "PHL",
+    "710": "ZAF",
+    "764": "THA",
+    "826": "UK",
+    "840": "USA",
+}
 # create output director for figures
 CUR_PATH = os.path.split(os.path.abspath(__file__))[0]
 OUTPUT_DIR = os.path.join(CUR_PATH, "..", "data", "OUTPUT", "Demographics")
@@ -113,30 +133,32 @@ def get_un_data(
         df = df[df.age < 100]  # need to drop 100+ age category
     else:
         # Read from UN GH Repo:
+        # Report plainly when there is nothing to fall back on, rather
+        # than raising a bare KeyError on the lookup below.
+        if country_id not in POPULATION_DATA_COUNTRIES:
+            raise ValueError(
+                "Could not retrieve population data from the UN WPP API "
+                "(HTTP status code: {s}), and UN country code {c} is "
+                "not archived in Population-Data, so there is no copy "
+                "to fall back on. Archived countries are: {a}. Either "
+                "supply a valid UN API token, or add the country to "
+                "https://github.com/EAPD-DRB/Population-Data".format(
+                    s=response.status_code,
+                    c=country_id,
+                    a=", ".join(sorted(POPULATION_DATA_COUNTRIES.values())),
+                )
+            )
         print(
             "Failed to retrieve population data from UN. Reading "
             + " from https://github.com/EAPD-DRB/Population-Data "
             + "instead of UN WPP API"
         )
-        country_dict = {
-            "840": "USA",
-            "710": "ZAF",
-            "458": "MYS",
-            "356": "IND",
-            "826": "UK",
-            "360": "IDN",
-            "608": "PHL",
-            "764": "THA",
-            "076": "BRA",
-            "410": "KOR",
-            "231": "ETH",
-        }
         un_variable_dict = {
             "68": "fertility_rates",
             "80": "mortality_rates",
             "47": "population",
         }
-        country = country_dict[country_id]
+        country = POPULATION_DATA_COUNTRIES[country_id]
         variable = un_variable_dict[variable_code]
         url = (
             "https://raw.githubusercontent.com/EAPD-DRB/"
