@@ -368,17 +368,42 @@ def test_make_visuals_passes_options_through(multi_industry_params):
     assert "stroke-width:4px" in out["mermaid"]
 
 
-def test_mermaid_defaults_to_elk_and_can_opt_out(multi_industry_params):
+def test_mermaid_layout_is_opt_in(multi_industry_params):
     """
-    ELK is the default for its orthogonal routing. layout=None gives output
-    that renders on GitHub, which does not load the ELK plugin.
+    The default carries no layout directive, so the source renders wherever it
+    is pasted. GitHub does not load the ELK plugin, so ELK is opt-in.
     """
     default = structure_plots.structure_to_mermaid(multi_industry_params)
-    assert default.startswith('%%{init: {"layout": "elk"}}%%')
-    assert "flowchart LR" in default
+    assert not default.startswith("%%{init")
+    assert default.startswith("flowchart LR")
 
-    portable = structure_plots.structure_to_mermaid(
-        multi_industry_params, layout=None
+    elk = structure_plots.structure_to_mermaid(
+        multi_industry_params, layout="elk"
     )
-    assert not portable.startswith("%%{init")
-    assert portable.startswith("flowchart LR")
+    assert elk.startswith('%%{init: {"layout": "elk"}}%%')
+    assert "flowchart LR" in elk
+
+
+def test_render_mermaid_says_what_is_missing(multi_industry_params, tmp_path):
+    """Without the CLI the error names the install, not an odd failure."""
+    source = structure_plots.structure_to_mermaid(multi_industry_params)
+    with pytest.raises(RuntimeError, match="mermaid-cli"):
+        structure_plots.render_mermaid(
+            source,
+            str(tmp_path / "graph.png"),
+            command=["definitely-not-a-real-mermaid-cli"],
+        )
+
+
+def test_make_visuals_honors_the_figure_format(
+    multi_industry_params, tmp_path
+):
+    out = structure_plots.make_visuals(
+        multi_industry_params,
+        ["circular_flow", "io_heatmap"],
+        output_dir=str(tmp_path),
+        fmt="svg",
+    )
+    for path in out.values():
+        assert path.endswith(".svg")
+        assert os.path.exists(path)

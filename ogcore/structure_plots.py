@@ -30,13 +30,13 @@ The same structure feeds several renderers, for different uses:
 * `plot_calibration_status` -- which values a country calibrated, and which
                                it inherited from OG-Core
 * `structure_to_mermaid`    -- text, for documentation kept in version
-                               control. Defaults to the institutional graph
-                               laid out by ELK: the industries collapse to one
-                               node, because every industry repeats the same
-                               factor and tax edges, and ELK routes what is
-                               left orthogonally. Pass `bundle=False` for one
-                               node per industry, and `layout=None` for output
-                               that renders on GitHub without a plugin.
+                               control. Gives the institutional graph, with
+                               the industries collapsed to one node because
+                               every industry repeats the same factor and tax
+                               edges. Pass `bundle=False` for one node per
+                               industry, and `layout="elk"` for orthogonal
+                               routing.
+* `render_mermaid`          -- that source as an image, via the Mermaid CLI
 
 `plot_calibration_fit` sits alongside them and is the one figure here that
 looks at results rather than inputs: it draws the model-versus-target table a
@@ -1390,6 +1390,81 @@ _MERMAID_GROUPS = [
 ]
 
 
+def render_mermaid(
+    source,
+    path,
+    scale=3,
+    background="white",
+    command=None,
+):
+    """
+    Rasterize Mermaid source to an image with the Mermaid CLI.
+
+    An image sidesteps the question of what a given viewer can render. It also
+    makes the ELK layout usable everywhere, since the CLI loads the plugin
+    that GitHub's markdown rendering does not.
+
+    The CLI is not an OG-Core dependency, because it pulls in Node and a
+    headless browser. Install it with `npm install -g @mermaid-js/mermaid-cli`
+    for `mmdc`, or pass `command=["npx", "-y", "@mermaid-js/mermaid-cli"]` to
+    fetch it on the fly.
+
+    Args:
+        source (str): Mermaid source, as returned by `structure_to_mermaid`
+        path (str): file to write. The extension chooses the format, from
+            those the CLI supports: png, svg and pdf.
+        scale (scalar): pixel scale factor, for a crisp raster
+        background (str): background color, or "transparent"
+        command (list): the CLI invocation. Defaults to `mmdc` on PATH.
+
+    Returns:
+        (str): the path written
+
+    Raises:
+        RuntimeError: if the CLI is not available or the render fails
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    if command is None:
+        executable = shutil.which("mmdc")
+        if executable is None:
+            raise RuntimeError(
+                "The Mermaid CLI was not found. Install it with "
+                "`npm install -g @mermaid-js/mermaid-cli`, or pass "
+                'command=["npx", "-y", "@mermaid-js/mermaid-cli"]. To skip '
+                "rendering, write the source itself and let the viewer draw "
+                "it."
+            )
+        command = [executable]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = os.path.join(tmp, "diagram.mmd")
+        with open(src_path, "w") as f:
+            f.write(source)
+        argv = list(command) + [
+            "-i",
+            src_path,
+            "-o",
+            path,
+            "-s",
+            str(scale),
+            "-b",
+            background,
+        ]
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True)
+        except OSError as error:
+            raise RuntimeError(f"Could not run {argv[0]}: {error}") from error
+    if done.returncode != 0:
+        raise RuntimeError(
+            f"{argv[0]} failed with code {done.returncode}:\n"
+            f"{done.stderr.strip() or done.stdout.strip()}"
+        )
+    return path
+
+
 def make_visuals(
     p,
     which="all",
@@ -1398,6 +1473,8 @@ def make_visuals(
     moments=None,
     output_dir=None,
     prefix="",
+    fmt="png",
+    mermaid_fmt="mmd",
     options=None,
 ):
     """
@@ -1422,8 +1499,17 @@ def make_visuals(
             returned in memory: figures as Matplotlib figures, `mermaid` as
             its source text.
         prefix (str): prepended to each filename, for tagging a country
+        fmt (str): file format for the figures, from anything Matplotlib
+            writes: png, svg, pdf, eps, jpg and so on. Vector formats suit a
+            paper; png suits a pull request.
+        mermaid_fmt (str): what to do with the Mermaid graph. "mmd" writes the
+            source, which is the portable choice and needs nothing installed.
+            "png", "svg" or "pdf" rasterize it with the Mermaid CLI through
+            `render_mermaid`, which is what to use when the viewer cannot draw
+            Mermaid itself, or when the ELK layout is wanted.
         options (dict): visual name mapped to keyword arguments for it, for
-            example {"mermaid": {"bundle": False}}
+            example {"mermaid": {"bundle": False, "layout": "elk"}}. The
+            Mermaid CLI arguments go under a "render" key.
 
     Returns:
         (dict): visual name mapped to a file path when `output_dir` is given,
@@ -1457,16 +1543,22 @@ def make_visuals(
     for name in names:
         kwargs = dict(options.get(name, {}))
         if name == "mermaid":
+            render_kwargs = kwargs.pop("render", {})
             text = structure_to_mermaid(
                 p, industry_names, good_names, **kwargs
             )
             if output_dir is None:
                 results[name] = text
-            else:
+            elif mermaid_fmt == "mmd":
                 path = os.path.join(output_dir, f"{prefix}{name}.mmd")
                 with open(path, "w") as f:
                     f.write(text)
                 results[name] = path
+            else:
+                path = os.path.join(
+                    output_dir, f"{prefix}{name}.{mermaid_fmt}"
+                )
+                results[name] = render_mermaid(text, path, **render_kwargs)
             continue
 
         func = VISUALS[name]
@@ -1482,7 +1574,7 @@ def make_visuals(
         if output_dir is None:
             results[name] = func(*args, **kwargs)
         else:
-            path = os.path.join(output_dir, f"{prefix}{name}.png")
+            path = os.path.join(output_dir, f"{prefix}{name}.{fmt}")
             func(*args, path=path, **kwargs)
             results[name] = path
 
@@ -1679,7 +1771,7 @@ def structure_to_mermaid(
     good_names=None,
     io_threshold=0.01,
     bundle=True,
-    layout="elk",
+    layout=None,
     link_width=2,
 ):
     """
@@ -1704,14 +1796,14 @@ def structure_to_mermaid(
             Set False for the full graph, one node per industry and one edge
             per coefficient, which is faithful but crowded above a few
             industries.
-        layout (str): the Mermaid layout engine. Defaults to "elk", which
-            routes edges orthogonally and brings each one into its node
-            square-on, so a path is far easier to follow than under the
-            default engine's long curves. ELK needs the
-            `@mermaid-js/layout-elk` plugin registered in the renderer:
-            mermaid.live, the VS Code extension and a local build have it,
-            GitHub's own markdown rendering does not. Pass None for output
-            that renders anywhere.
+        layout (str): the Mermaid layout engine. Left unset by default, so
+            the source renders wherever it is pasted. Pass "elk" for
+            orthogonal routing, which brings each edge into its node square-on
+            and is much easier to follow than the default engine's long
+            curves; it needs the `@mermaid-js/layout-elk` plugin, which
+            mermaid.live, the VS Code extension and the Mermaid CLI provide
+            but GitHub's own markdown rendering does not. `render_mermaid`
+            sidesteps that by rasterizing locally.
         link_width (scalar): stroke width for the edges, in px
 
     Returns:
