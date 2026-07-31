@@ -132,6 +132,62 @@ STATUS_TINTS = {
     "missing": "#E4E2DA",
 }
 
+# Text colors for a symbol printed on one of those tints.
+STATUS_INK = {
+    "calibrated": "#085041",
+    "default": "#633806",
+    "missing": "#5F5E5A",
+}
+
+# The symbol each parameter goes by in the theory documentation, so a chip
+# says which parameter it stands for and not merely whether it was
+# calibrated. Parameters with no established symbol get a short abbreviation.
+PARAM_SYMBOLS = {
+    "S": "$S$",
+    "J": "$J$",
+    "lambdas": r"$\lambda_j$",
+    "e": "$e$",
+    "beta_annual": r"$\beta$",
+    "sigma": r"$\sigma$",
+    "frisch": r"$\nu$",
+    "chi_n": r"$\chi^n$",
+    "chi_b": r"$\chi^b$",
+    "g_y_annual": "$g_y$",
+    "ltilde": r"$\tilde{l}$",
+    "M": "$M$",
+    "gamma": r"$\gamma$",
+    "epsilon": r"$\varepsilon$",
+    "Z": "$Z$",
+    "delta_annual": r"$\delta$",
+    "gamma_g": r"$\gamma_g$",
+    "tau_b": r"$\tau_b$",
+    "delta_tau_annual": r"$\delta_\tau$",
+    "I": "$I$",
+    "alpha_c": r"$\alpha_c$",
+    "io_matrix": r"$\pi$",
+    "tau_c": r"$\tau_c$",
+    "c_min": "$c_{min}$",
+    "alpha_G": r"$\alpha_G$",
+    "alpha_T": r"$\alpha_T$",
+    "alpha_I": r"$\alpha_I$",
+    "initial_debt_ratio": "$D/Y$",
+    "r_gov_scale": "$r_{sc}$",
+    "r_gov_shift": "$r_{sh}$",
+    "tau_bq": r"$\tau_{bq}$",
+    "tau_p": r"$\tau_p$",
+    "h_wealth": "$h_w$",
+    "m_wealth": "$m_w$",
+    "p_wealth": "$p_w$",
+    "pension_system": "pens",
+    "zeta_K": r"$\zeta_K$",
+    "zeta_D": r"$\zeta_D$",
+    "alpha_RM_1": r"$\alpha_{RM}^1$",
+    "alpha_RM_T": r"$\alpha_{RM}^T$",
+    "alpha_FA": r"$\alpha_{FA}$",
+    "world_int_rate_annual": "$r^*$",
+    "initial_foreign_debt_ratio": "$D_f/Y$",
+}
+
 
 def _differs(a, b):
     """Whether two parameter values differ, tolerating shape changes."""
@@ -458,6 +514,58 @@ def summarize_structure(p, industry_names=None, good_names=None):
     }
 
 
+def _chip_grid(ax, x, y, w, status, chip_w_max=3.4, chip_h=1.45):
+    """
+    Draw the calibration chips along the bottom of a box, one per parameter,
+    each labelled with the parameter's symbol.
+
+    Columns are chosen from the width available, so a wide box gets one row
+    and a narrow one wraps. Returns the vertical band consumed, which the
+    caller keeps clear of its own text.
+
+    Args:
+        status (list): (parameter name, status) pairs, in reading order
+
+    Returns:
+        (float): height taken up, in axis units
+    """
+    pad, col_gap, row_gap = 1.2, 0.3, 0.32
+    track = w - 2 * pad
+    max_cols = max(1, int((track + col_gap) // (2.6 + col_gap)))
+    n_rows = int(np.ceil(len(status) / max_cols))
+    cols = int(np.ceil(len(status) / n_rows))
+    chip_w = min(chip_w_max, (track - col_gap * (cols - 1)) / cols)
+
+    grid_w = cols * chip_w + col_gap * (cols - 1)
+    x0 = x + (w - grid_w) / 2
+    for k, (name, state) in enumerate(status):
+        row, col = divmod(k, cols)
+        cx = x0 + col * (chip_w + col_gap)
+        cy = y + 0.8 + (n_rows - 1 - row) * (chip_h + row_gap)
+        ax.add_patch(
+            FancyBboxPatch(
+                (cx, cy),
+                chip_w,
+                chip_h,
+                boxstyle="round,pad=0,rounding_size=0.18",
+                linewidth=0,
+                facecolor=STATUS_TINTS[state],
+                zorder=5,
+            )
+        )
+        ax.text(
+            cx + chip_w / 2,
+            cy + chip_h / 2,
+            PARAM_SYMBOLS.get(name, name),
+            ha="center",
+            va="center",
+            fontsize=6.2,
+            color=STATUS_INK[state],
+            zorder=6,
+        )
+    return 0.8 + n_rows * chip_h + (n_rows - 1) * row_gap + 0.6
+
+
 def _box(
     ax,
     x,
@@ -475,13 +583,12 @@ def _box(
     """
     Draw one labelled node box, returning its bounding box.
 
-    When `status` is a list of per-parameter statuses, a row of small chips
-    along the bottom edge shows one chip per governing parameter, in the same
-    order and reading as the same colors as `plot_calibration_status`, with
-    the count in the corner. The chips use muted tints and a capped width:
-    they are a footnote on the box, not a second subject competing with the
-    flows. Border style is left alone deliberately, because dashes already
-    mean a cross-border flow on the arrows.
+    When `status` is a list of (parameter name, status) pairs, a grid of small
+    chips sits along the bottom edge, one per governing parameter, each
+    carrying the parameter's symbol and tinted by whether it was calibrated.
+    The chips use muted tints so they read as a footnote on the box rather
+    than a second subject competing with the flows. Border style is left
+    alone deliberately, because dashes already mean a cross-border flow.
     """
     style = NODE_STYLES[group]
     ax.add_patch(
@@ -496,40 +603,25 @@ def _box(
             zorder=3,
         )
     )
+    band = _chip_grid(ax, x, y, w, status) if status else 0.0
     if status:
-        n = len(status)
-        n_cal = sum(s == "calibrated" for s in status)
-        gap = 0.3
-        chip_w = min(1.9, (w - 2.4 - gap * (n - 1)) / n)
-        chip_h = min(0.7, h * 0.07)
-        row_w = n * chip_w + gap * (n - 1)
-        x0 = x + (w - row_w) / 2
-        for k, state in enumerate(status):
-            ax.add_patch(
-                FancyBboxPatch(
-                    (x0 + k * (chip_w + gap), y + 0.85),
-                    chip_w,
-                    chip_h,
-                    boxstyle="square,pad=0",
-                    linewidth=0,
-                    facecolor=STATUS_TINTS[state],
-                    zorder=5,
-                )
-            )
+        n_cal = sum(state == "calibrated" for _, state in status)
         ax.text(
             x + w - 1.0,
             y + h - 1.0,
-            f"{n_cal}/{n}",
+            f"{n_cal}/{len(status)}",
             ha="right",
             va="top",
             fontsize=7,
             color="#5F5E5A",
             zorder=5,
         )
+    # Text is centred in whatever is left above the chip grid.
+    base, inner = y + band, h - band
     if subtitle:
         ax.text(
             x + w / 2,
-            y + h * 0.60,
+            base + inner * 0.62,
             title,
             ha="center",
             va="center",
@@ -539,7 +631,7 @@ def _box(
         )
         ax.text(
             x + w / 2,
-            y + h * 0.30,
+            base + inner * 0.28,
             subtitle,
             ha="center",
             va="center",
@@ -550,7 +642,7 @@ def _box(
     else:
         ax.text(
             x + w / 2,
-            y + h / 2,
+            base + inner / 2,
             title,
             ha="center",
             va="center",
@@ -642,7 +734,7 @@ def plot_circular_flow(
         status, _ = calibration_status(p, calibrated_params)
         blocks = {
             block: [
-                status[n]
+                (n, status[n])
                 for n in dict.fromkeys(names)
                 if status[n] != "missing"
             ]
