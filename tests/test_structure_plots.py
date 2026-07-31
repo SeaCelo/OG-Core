@@ -1,4 +1,5 @@
 import os
+import shutil
 import matplotlib
 import numpy as np
 import pytest
@@ -308,11 +309,14 @@ def test_calibration_fit_handles_an_exact_calibration():
 
 
 def test_make_visuals_writes_the_whole_set(multi_industry_params, tmp_path):
+    # mermaid_fmt="mmd" keeps this hermetic: the default renders an image and
+    # would need the Mermaid CLI, which CI has no reason to install.
     out = structure_plots.make_visuals(
         multi_industry_params,
         moments=MOMENTS,
         output_dir=str(tmp_path),
         prefix="phl_",
+        mermaid_fmt="mmd",
     )
     assert list(out) == list(structure_plots.VISUALS)
     for name, path in out.items():
@@ -393,6 +397,20 @@ def test_render_mermaid_says_what_is_missing(multi_industry_params, tmp_path):
             str(tmp_path / "graph.png"),
             command=["definitely-not-a-real-mermaid-cli"],
         )
+
+
+@pytest.mark.skipif(
+    shutil.which("mmdc") is None, reason="the Mermaid CLI is not installed"
+)
+def test_make_visuals_renders_mermaid_to_an_image(
+    multi_industry_params, tmp_path
+):
+    """The default writes an image, laid out by ELK since we render it."""
+    out = structure_plots.make_visuals(
+        multi_industry_params, "mermaid", output_dir=str(tmp_path)
+    )
+    assert out["mermaid"].endswith(".png")
+    assert os.path.getsize(out["mermaid"]) > 0
 
 
 def test_make_visuals_honors_the_figure_format(

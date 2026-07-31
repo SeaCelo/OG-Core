@@ -36,7 +36,10 @@ The same structure feeds several renderers, for different uses:
                                edges. Pass `bundle=False` for one node per
                                industry, and `layout="elk"` for orthogonal
                                routing.
-* `render_mermaid`          -- that source as an image, via the Mermaid CLI
+* `render_mermaid`          -- that source as an image, via the Mermaid CLI.
+                               The CLI is the one piece of this module that is
+                               not pure Python: install it with
+                               `npm install -g @mermaid-js/mermaid-cli`.
 
 `plot_calibration_fit` sits alongside them and is the one figure here that
 looks at results rather than inputs: it draws the model-versus-target table a
@@ -1474,7 +1477,7 @@ def make_visuals(
     output_dir=None,
     prefix="",
     fmt="png",
-    mermaid_fmt="mmd",
+    mermaid_fmt="png",
     options=None,
 ):
     """
@@ -1502,11 +1505,13 @@ def make_visuals(
         fmt (str): file format for the figures, from anything Matplotlib
             writes: png, svg, pdf, eps, jpg and so on. Vector formats suit a
             paper; png suits a pull request.
-        mermaid_fmt (str): what to do with the Mermaid graph. "mmd" writes the
-            source, which is the portable choice and needs nothing installed.
-            "png", "svg" or "pdf" rasterize it with the Mermaid CLI through
-            `render_mermaid`, which is what to use when the viewer cannot draw
-            Mermaid itself, or when the ELK layout is wanted.
+        mermaid_fmt (str): what to do with the Mermaid graph. Defaults to
+            "png", rendered through `render_mermaid`, so the result drops into
+            a document like any other image and needs nothing of the viewer.
+            "svg" and "pdf" work the same way. Rendering here means the ELK
+            layout is available, so it is used unless `options` says
+            otherwise. Pass "mmd" for the source instead, which needs no
+            Mermaid CLI and, without a layout directive, draws on GitHub.
         options (dict): visual name mapped to keyword arguments for it, for
             example {"mermaid": {"bundle": False, "layout": "elk"}}. The
             Mermaid CLI arguments go under a "render" key.
@@ -1544,6 +1549,10 @@ def make_visuals(
         kwargs = dict(options.get(name, {}))
         if name == "mermaid":
             render_kwargs = kwargs.pop("render", {})
+            if mermaid_fmt != "mmd":
+                # We control the renderer here, so the plugin ELK needs is
+                # present and its orthogonal routing is the better default.
+                kwargs.setdefault("layout", "elk")
             text = structure_to_mermaid(
                 p, industry_names, good_names, **kwargs
             )
