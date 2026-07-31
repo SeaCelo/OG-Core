@@ -155,14 +155,86 @@ def test_plots_save_to_path(multi_industry_params, tmp_path):
     assert out.exists()
 
 
-def test_mermaid_covers_every_node_and_edge(multi_industry_params):
+def test_mermaid_unbundled_covers_every_node_and_edge(multi_industry_params):
     nodes, edges = structure_plots.get_structure(multi_industry_params)
-    text = structure_plots.structure_to_mermaid(multi_industry_params)
+    text = structure_plots.structure_to_mermaid(
+        multi_industry_params, bundle=False
+    )
     assert text.startswith("flowchart LR")
     for nid in nodes:
         assert nid in text
     # One linkStyle per edge, so no edge is left with a default color.
     assert text.count("linkStyle ") == len(edges)
+
+
+def test_bundling_collapses_whole_group_fanouts(multi_industry_params):
+    """
+    An edge repeated to every industry becomes one edge on the group; an edge
+    reaching only some of them stays as it is.
+    """
+    nodes, edges = structure_plots.get_structure(multi_industry_params)
+    bundled = structure_plots.bundle_group_edges(nodes, edges)
+
+    assert len(bundled) < len(edges)
+    labor = [
+        e for e in bundled if e["label"] == "labor" and e["source"] == "HH"
+    ]
+    assert len(labor) == 1
+    assert labor[0]["target"] == "industry"
+    assert labor[0]["bundled"] == multi_industry_params.M
+
+    # Only the last industry supplies investment, so that one is untouched.
+    investment = [e for e in bundled if e["label"] == "investment"]
+    assert len(investment) == 1
+    assert investment[0]["source"] == f"IND{multi_industry_params.M - 1}"
+
+    # Every io coefficient keeps its own edge, because each has its own label.
+    io_edges = [
+        e
+        for e in bundled
+        if e["source"].startswith("IND") and e["target"].startswith("GOOD")
+    ]
+    assert io_edges and all("bundled" not in e for e in io_edges)
+
+
+def test_collapsing_groups_leaves_one_node_each(multi_industry_params):
+    nodes, edges = structure_plots.get_structure(multi_industry_params)
+    edges = structure_plots.bundle_group_edges(nodes, edges)
+    collapsed, out = structure_plots.collapse_group_nodes(
+        nodes,
+        edges,
+        ("industry", "good"),
+        dict(structure_plots._MERMAID_GROUPS),
+    )
+
+    assert "industry" in collapsed and "good" in collapsed
+    assert not [n for n in collapsed if n.startswith(("IND", "GOOD"))]
+    assert f"M = {multi_industry_params.M}" in collapsed["industry"]["detail"]
+
+    # The io coefficients ran between two collapsed groups, so they merge into
+    # one edge rather than becoming a self-loop or a list of numbers.
+    industry_to_good = [
+        e for e in out if e["source"] == "industry" and e["target"] == "good"
+    ]
+    assert len(industry_to_good) == 1
+    assert industry_to_good[0]["label"] == "output"
+
+    # Bequests were already a self-loop and survive as one.
+    assert [e for e in out if e["source"] == e["target"] == "HH"]
+
+
+def test_mermaid_bundled_is_smaller_and_flat(multi_industry_params):
+    """The institutional graph needs no subgraphs and far fewer edges."""
+    full = structure_plots.structure_to_mermaid(
+        multi_industry_params, bundle=False
+    )
+    bundled = structure_plots.structure_to_mermaid(
+        multi_industry_params, bundle=True
+    )
+    assert bundled.count(" --> ") < full.count(" --> ")
+    assert "subgraph" not in bundled
+    assert "Production industries" in bundled
+    assert bundled.count("linkStyle ") == bundled.count(" --> ")
 
 
 def test_summarize_structure_reports_off_channels(default_params):

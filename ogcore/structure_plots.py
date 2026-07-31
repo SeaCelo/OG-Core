@@ -29,7 +29,12 @@ The same structure feeds several renderers, for different uses:
 * `plot_io_heatmap`         -- the industry-to-good coefficients as a matrix
 * `plot_calibration_status` -- which values a country calibrated, and which
                                it inherited from OG-Core
-* `structure_to_mermaid`    -- text, renders natively in GitHub markdown
+* `structure_to_mermaid`    -- text, renders natively in GitHub markdown.
+                               Defaults to the institutional graph, with the
+                               industries collapsed to one node, because
+                               every industry repeats the same factor and tax
+                               edges and no automatic layout survives that.
+                               Pass `bundle=False` for one node per industry.
 
 `plot_calibration_fit` sits alongside them and is the one figure here that
 looks at results rather than inputs: it draws the model-versus-target table a
@@ -1380,28 +1385,229 @@ _MERMAID_GROUPS = [
 ]
 
 
+def bundle_group_edges(nodes, edges):
+    """
+    Collapse an edge repeated across a whole group into one edge on the group.
+
+    Every industry hires labor, rents domestic and foreign capital, uses
+    public capital and pays corporate income tax, so `get_structure` emits one
+    edge per industry for each of those. That is faithful, and for a model
+    with eight industries it is forty near-identical edges that no automatic
+    layout can place without piling the labels on top of each other. Since
+    they say the same thing about every member of the group, one edge drawn
+    on the group says it once.
+
+    A fan-out is only collapsed when it reaches *every* member of the group.
+    Reaching some of them is a real distinction and is left alone, otherwise
+    the diagram would claim a channel that does not exist. The industry-to-good
+    coefficients are never collapsed: each carries its own share as a label, so
+    they never group.
+
+    Args:
+        nodes (dict): as returned by `get_structure`
+        edges (list): as returned by `get_structure`
+
+    Returns:
+        (list): edges with each whole-group fan-out replaced by a single edge
+            whose endpoint is the group name, carrying `bundled` with the
+            number of edges it stands for. Original order is preserved.
+    """
+    members = {}
+    for nid, meta in nodes.items():
+        members.setdefault(meta["group"], set()).add(nid)
+    groupable = {g for g, ms in members.items() if len(ms) > 1}
+
+    def group_of(nid):
+        return nodes[nid]["group"]
+
+    result = [dict(e) for e in edges]
+    for direction in ("out", "in"):
+        buckets = {}
+        for idx, e in enumerate(result):
+            if e is None or e["source"] == e["target"] or "bundled" in e:
+                continue
+            anchor, spread = (
+                (e["source"], e["target"])
+                if direction == "out"
+                else (e["target"], e["source"])
+            )
+            group = group_of(spread)
+            if group not in groupable or group_of(anchor) == group:
+                continue
+            key = (anchor, e["label"], e["kind"], group)
+            buckets.setdefault(key, []).append(idx)
+
+        for (anchor, label, kind, group), idxs in buckets.items():
+            reached = {
+                result[i]["target"]
+                if direction == "out"
+                else result[i]["source"]
+                for i in idxs
+            }
+            if reached != members[group]:
+                continue
+            first = min(idxs)
+            result[first] = {
+                "source": anchor if direction == "out" else group,
+                "target": group if direction == "out" else anchor,
+                "label": label,
+                "kind": kind,
+                "bundled": len(idxs),
+            }
+            for i in idxs:
+                if i != first:
+                    result[i] = None
+
+    return [e for e in result if e is not None]
+
+
+# What an edge becomes once both of its groups collapse to single nodes and
+# several edges land on the same pair. The coefficients themselves are left to
+# `plot_io_heatmap`, which shows them far better than any label can.
+SUMMARY_LABELS = {
+    ("industry", "good"): "output",
+    ("good", "household"): "consumption",
+}
+
+
+def collapse_group_nodes(nodes, edges, groups, captions):
+    """
+    Replace each named group with a single node standing for all its members.
+
+    The companion to `bundle_group_edges`, and the reason it is needed:
+    bundling strips the factor and tax edges off the individual industries, so
+    most of them end up carrying no edge at all. Listing them separately then
+    adds nodes an automatic layout has no reason to place anywhere in
+    particular, and they drift to the far corners of the diagram.
+
+    Edges that ran between two members of the same collapsed group would
+    become self-loops and are dropped. Edges that collapse onto the same pair
+    are merged, taking a summary label from SUMMARY_LABELS.
+
+    Args:
+        nodes (dict): as returned by `get_structure`
+        edges (list): as returned by `get_structure`, ideally already bundled
+        groups (iterable): group names to collapse
+        captions (dict): group name mapped to its display caption
+
+    Returns:
+        nodes (dict), edges (list): with the named groups collapsed
+    """
+    groups = set(groups)
+    members = {g: [] for g in groups}
+    for nid, meta in nodes.items():
+        if meta["group"] in groups:
+            members[meta["group"]].append(nid)
+
+    collapsed = {}
+    for nid, meta in nodes.items():
+        if meta["group"] not in groups:
+            collapsed[nid] = meta
+    dimension = {"industry": "M", "good": "I"}
+    for group in groups:
+        if not members[group]:
+            continue
+        count = len(members[group])
+        symbol = dimension.get(group)
+        collapsed[group] = {
+            "label": captions.get(group, group),
+            "group": group,
+            "detail": f"{symbol} = {count}" if symbol else str(count),
+        }
+
+    def remap(nid):
+        # An endpoint may already be a group name, if the edge came out of
+        # `bundle_group_edges`.
+        if nid in members:
+            return nid
+        meta = nodes.get(nid)
+        if meta is None:
+            return nid
+        group = meta["group"]
+        return group if group in groups and members[group] else nid
+
+    merged, order = {}, []
+    for idx, e in enumerate(edges):
+        source, target = remap(e["source"]), remap(e["target"])
+        if source == target and e["source"] != e["target"]:
+            continue
+        # Only edges the collapse actually moved are candidates for merging.
+        # Two that already ran between the same pair carry distinct labels
+        # worth keeping, and Mermaid draws them side by side happily.
+        moved = source != e["source"] or target != e["target"]
+        key = (source, target, e["kind"]) if moved else (idx,)
+        if key in merged:
+            merged[key].append(e)
+        else:
+            merged[key] = [e]
+            order.append((key, source, target, e["kind"]))
+
+    out = []
+    for key, source, target, kind in order:
+        group = merged[key]
+        labels = list(dict.fromkeys(e["label"] for e in group))
+        summary = SUMMARY_LABELS.get(
+            (
+                nodes.get(group[0]["source"], {}).get("group"),
+                nodes.get(group[0]["target"], {}).get("group"),
+            )
+        )
+        joined = ", ".join(labels)
+        if len(labels) == 1:
+            label = labels[0]
+        elif summary:
+            # A named summary beats a list of coefficients, which say nothing
+            # without knowing which industry or good each belongs to.
+            label = summary
+        elif len(joined) <= 58:
+            label = joined
+        else:
+            label = f"{len(group)} flows"
+        out.append(
+            {"source": source, "target": target, "label": label, "kind": kind}
+        )
+    return collapsed, out
+
+
 def structure_to_mermaid(
-    p, industry_names=None, good_names=None, io_threshold=0.01
+    p,
+    industry_names=None,
+    good_names=None,
+    io_threshold=0.01,
+    bundle=True,
 ):
     """
     The structure as Mermaid flowchart text. GitHub renders this natively in
     markdown, and Jupyter Book renders it with the sphinxcontrib-mermaid
     extension, so it suits documentation that should stay in version control.
 
-    Raising `io_threshold` is the way to keep the result readable. Mermaid
-    lays the graph out on its own, and with many industries the repeated
-    factor and tax edges crowd each other.
+    Mermaid lays the graph out on its own, and it does that badly with many
+    industries, because every industry repeats the same five factor and tax
+    edges. `bundle` is the answer: it collapses those fan-outs onto the group
+    and the group onto one node, leaving the institutional structure. The
+    industry-by-industry coefficients are then read off `plot_io_heatmap`,
+    which shows them better than a label ever could.
 
     Args:
         p (OG-Core Specifications object): model parameters
         industry_names (list): labels for the M industries
         good_names (list): labels for the I consumption goods
         io_threshold (scalar): omit coefficients below this share
+        bundle (bool): produce the institutional graph, with whole-group
+            fan-outs and the industry and consumption-good groups collapsed.
+            Set False for the full graph, one node per industry and one edge
+            per coefficient, which is faithful but crowded above a few
+            industries.
 
     Returns:
         (str): Mermaid flowchart source
     """
     nodes, edges = get_structure(p, industry_names, good_names, io_threshold)
+    if bundle:
+        edges = bundle_group_edges(nodes, edges)
+        nodes, edges = collapse_group_nodes(
+            nodes, edges, ("industry", "good"), dict(_MERMAID_GROUPS)
+        )
     lines = ["flowchart LR"]
     for group, caption in _MERMAID_GROUPS:
         members = [n for n, v in nodes.items() if v["group"] == group]
