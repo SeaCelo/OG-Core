@@ -684,7 +684,7 @@ def plot_circular_flow(
         34,
         9,
         "Goods market",
-        f"I = {p.I} consumption goods",
+        f"I = {p.I} consumption good" + ("s" if p.I > 1 else ""),
         "market",
         status=blocks.get("good"),
     )
@@ -717,7 +717,7 @@ def plot_circular_flow(
         25,
         17,
         "Industries",
-        f"M = {p.M} sectors",
+        f"M = {p.M} sector" + ("s" if p.M > 1 else ""),
         "industry",
         status=blocks.get("industry"),
     )
