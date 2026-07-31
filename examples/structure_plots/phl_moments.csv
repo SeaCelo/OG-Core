@@ -1,0 +1,16 @@
+group,name,model,target,source
+Revenue,PIT / Y,0.0312,0.0312,OECD Revenue Statistics
+Revenue,payroll / Y,0.0278,0.0278,OECD (SSC)
+Revenue,CIT-line / Y,0.0421,0.0420,OECD CIT + BTr
+Revenue,indirect / Y,0.0794,0.0794,OECD G&S + fees
+Revenue,wealth / Y,0.0132,0.0132,OECD other taxes
+Revenue,bequest / Y,0.0007,0.0007,BIR estate + donor
+Revenue,total revenue / Y,0.1945,0.1943,
+External,RM / Y,0.0812,0.0812,BSP personal remittances
+External,K_f / K,0.2027,0.20,BSP IIP
+External,D_f / D,0.2000,0.20,BTr
+Fiscal,D / Y,0.6000,0.60,BTr
+Fiscal,r_gov,0.0203,0.020,BTr effective real rate
+Fiscal,primary balance 2025,-2.51,-2.51,MTFF program
+Fiscal,I_g / Y 2025,5.30,5.3,MTFF infrastructure
+Wealth,B(0) / Y(0),3.3487,3.35,PWT/ICSD/IIP/BTr
