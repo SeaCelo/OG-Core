@@ -1,3 +1,4 @@
+import os
 import matplotlib
 import numpy as np
 import pytest
@@ -304,3 +305,75 @@ def test_calibration_fit_handles_an_exact_calibration():
     fig = structure_plots.plot_calibration_fit(exact)
     assert isinstance(fig, matplotlib.figure.Figure)
     matplotlib.pyplot.close(fig)
+
+
+def test_make_visuals_writes_the_whole_set(multi_industry_params, tmp_path):
+    out = structure_plots.make_visuals(
+        multi_industry_params,
+        moments=MOMENTS,
+        output_dir=str(tmp_path),
+        prefix="phl_",
+    )
+    assert list(out) == list(structure_plots.VISUALS)
+    for name, path in out.items():
+        assert os.path.exists(path)
+        assert os.path.basename(path).startswith("phl_")
+        assert path.endswith(".mmd" if name == "mermaid" else ".png")
+
+
+def test_make_visuals_returns_objects_without_a_directory(
+    multi_industry_params,
+):
+    out = structure_plots.make_visuals(
+        multi_industry_params, ["circular_flow", "mermaid"]
+    )
+    assert isinstance(out["circular_flow"], matplotlib.figure.Figure)
+    assert out["mermaid"].startswith("flowchart LR")
+    matplotlib.pyplot.close(out["circular_flow"])
+
+
+def test_make_visuals_accepts_one_name(multi_industry_params):
+    out = structure_plots.make_visuals(multi_industry_params, "io_heatmap")
+    assert list(out) == ["io_heatmap"]
+    matplotlib.pyplot.close(out["io_heatmap"])
+
+
+def test_make_visuals_skips_the_fit_when_no_moments(multi_industry_params):
+    """
+    Targets come from published sources, so "all" without them means all the
+    rest. Asking for the fit by name without them is an error.
+    """
+    out = structure_plots.make_visuals(multi_industry_params)
+    assert "calibration_fit" not in out
+    for fig in out.values():
+        if isinstance(fig, matplotlib.figure.Figure):
+            matplotlib.pyplot.close(fig)
+
+    with pytest.raises(ValueError):
+        structure_plots.make_visuals(multi_industry_params, "calibration_fit")
+
+
+def test_make_visuals_rejects_an_unknown_name(multi_industry_params):
+    with pytest.raises(ValueError):
+        structure_plots.make_visuals(multi_industry_params, "not_a_visual")
+
+
+def test_make_visuals_passes_options_through(multi_industry_params):
+    out = structure_plots.make_visuals(
+        multi_industry_params,
+        "mermaid",
+        options={"mermaid": {"bundle": False, "link_width": 4}},
+    )
+    assert "subgraph" in out["mermaid"]
+    assert "stroke-width:4px" in out["mermaid"]
+
+
+def test_mermaid_layout_directive_is_opt_in(multi_industry_params):
+    plain = structure_plots.structure_to_mermaid(multi_industry_params)
+    assert not plain.startswith("%%{init")
+
+    elk = structure_plots.structure_to_mermaid(
+        multi_industry_params, layout="elk"
+    )
+    assert elk.startswith('%%{init: {"layout": "elk"}}%%')
+    assert "flowchart LR" in elk

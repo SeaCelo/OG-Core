@@ -39,6 +39,9 @@ The same structure feeds several renderers, for different uses:
 `plot_calibration_fit` sits alongside them and is the one figure here that
 looks at results rather than inputs: it draws the model-versus-target table a
 country calibration reports, from moments the caller supplies.
+
+`make_visuals` produces any or all of them in one call, which is how a
+country's set is generated on demand.
 ------------------------------------------------------------------------
 """
 
@@ -1385,6 +1388,105 @@ _MERMAID_GROUPS = [
 ]
 
 
+def make_visuals(
+    p,
+    which="all",
+    industry_names=None,
+    good_names=None,
+    moments=None,
+    output_dir=None,
+    prefix="",
+    options=None,
+):
+    """
+    Generate one, several or all of this module's visuals in a single call.
+
+    The intended use is on demand for a country: hand it a parameterization
+    and it writes the set. Every visual except `calibration_fit` is built from
+    the parameterization alone, so the usual call needs nothing else.
+
+    Args:
+        p (OG-Core Specifications object): model parameters
+        which (str or iterable): "all", or a name or names from VISUALS
+        industry_names (list): labels for the M industries. Country packages
+            keep these in a `PROD_DICT`.
+        good_names (list): labels for the I consumption goods, from a
+            `CONS_DICT`.
+        moments (DataFrame or list): the targeted moments, needed only for
+            `calibration_fit`. Requesting that visual without them is an
+            error; asking for "all" without them skips it, since the targets
+            come from published sources rather than from the parameters.
+        output_dir (str): directory to write into. When None every visual is
+            returned in memory: figures as Matplotlib figures, `mermaid` as
+            its source text.
+        prefix (str): prepended to each filename, for tagging a country
+        options (dict): visual name mapped to keyword arguments for it, for
+            example {"mermaid": {"bundle": False}}
+
+    Returns:
+        (dict): visual name mapped to a file path when `output_dir` is given,
+            and to the figure or source text when it is not
+    """
+    if isinstance(which, str):
+        names = list(VISUALS) if which == "all" else [which]
+    else:
+        names = list(which)
+
+    unknown = [n for n in names if n not in VISUALS]
+    if unknown:
+        raise ValueError(
+            f"Unknown visual(s) {unknown}. Choose from {list(VISUALS)}."
+        )
+
+    if "calibration_fit" in names and moments is None:
+        if which == "all":
+            names.remove("calibration_fit")
+        else:
+            raise ValueError(
+                "calibration_fit needs `moments`, the model-versus-target "
+                "table; it cannot be derived from the parameters."
+            )
+
+    options = options or {}
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+
+    results = {}
+    for name in names:
+        kwargs = dict(options.get(name, {}))
+        if name == "mermaid":
+            text = structure_to_mermaid(
+                p, industry_names, good_names, **kwargs
+            )
+            if output_dir is None:
+                results[name] = text
+            else:
+                path = os.path.join(output_dir, f"{prefix}{name}.mmd")
+                with open(path, "w") as f:
+                    f.write(text)
+                results[name] = path
+            continue
+
+        func = VISUALS[name]
+        if name == "calibration_fit":
+            args = (moments,)
+        elif name == "calibration_status":
+            args = (p,)
+        else:
+            args = (p,)
+            kwargs.setdefault("industry_names", industry_names)
+            kwargs.setdefault("good_names", good_names)
+
+        if output_dir is None:
+            results[name] = func(*args, **kwargs)
+        else:
+            path = os.path.join(output_dir, f"{prefix}{name}.png")
+            func(*args, path=path, **kwargs)
+            results[name] = path
+
+    return results
+
+
 def bundle_group_edges(nodes, edges):
     """
     Collapse an edge repeated across a whole group into one edge on the group.
@@ -1575,6 +1677,8 @@ def structure_to_mermaid(
     good_names=None,
     io_threshold=0.01,
     bundle=True,
+    layout=None,
+    link_width=2,
 ):
     """
     The structure as Mermaid flowchart text. GitHub renders this natively in
@@ -1598,6 +1702,16 @@ def structure_to_mermaid(
             Set False for the full graph, one node per industry and one edge
             per coefficient, which is faithful but crowded above a few
             industries.
+        layout (str): pass "elk" to request Mermaid's ELK layout, which routes
+            edges orthogonally and brings each arrow into its node square-on.
+            Direction reads far better that way, and it is the only real
+            remedy available: Mermaid fixes the size of its arrowheads, and
+            neither a heavier link nor the thick-arrow syntax enlarges them.
+            ELK needs the `@mermaid-js/layout-elk` plugin registered in the
+            renderer, which GitHub does not load, so it is off by default.
+        link_width (scalar): stroke width for the edges, in px. Heavier links
+            read more clearly at a distance even though the arrowheads keep
+            their size.
 
     Returns:
         (str): Mermaid flowchart source
@@ -1608,7 +1722,10 @@ def structure_to_mermaid(
         nodes, edges = collapse_group_nodes(
             nodes, edges, ("industry", "good"), dict(_MERMAID_GROUPS)
         )
-    lines = ["flowchart LR"]
+    lines = []
+    if layout:
+        lines.append('%%{init: {"layout": "' + layout + '"}}%%')
+    lines.append("flowchart LR")
     for group, caption in _MERMAID_GROUPS:
         members = [n for n, v in nodes.items() if v["group"] == group]
         if not members:
@@ -1633,7 +1750,7 @@ def structure_to_mermaid(
         dash = ",stroke-dasharray:4 3" if e["kind"] == "foreign" else ""
         lines.append(
             f"    linkStyle {idx} stroke:{style['color']},"
-            f"stroke-width:2px{dash}"
+            f"stroke-width:{link_width}px{dash}"
         )
     for group, _ in _MERMAID_GROUPS:
         members = [n for n, v in nodes.items() if v["group"] == group]
@@ -1646,3 +1763,14 @@ def structure_to_mermaid(
         )
         lines.append(f"    class {','.join(members)} {group}")
     return "\n".join(lines)
+
+
+# The visuals `make_visuals` can produce, in the order it produces them.
+# Defined last because it names the functions above it.
+VISUALS = {
+    "circular_flow": plot_circular_flow,
+    "io_heatmap": plot_io_heatmap,
+    "calibration_status": plot_calibration_status,
+    "calibration_fit": plot_calibration_fit,
+    "mermaid": structure_to_mermaid,
+}
