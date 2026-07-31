@@ -30,8 +30,6 @@ The same structure feeds several renderers, for different uses:
 * `plot_calibration_status` -- which values a country calibrated, and which
                                it inherited from OG-Core
 * `structure_to_mermaid`    -- text, renders natively in GitHub markdown
-* `structure_to_dot`        -- text for Graphviz, which lays out dense
-                               graphs far better than Mermaid
 ------------------------------------------------------------------------
 """
 
@@ -1127,9 +1125,11 @@ def structure_to_mermaid(
     """
     The structure as Mermaid flowchart text. GitHub renders this natively in
     markdown, and Jupyter Book renders it with the sphinxcontrib-mermaid
-    extension, so it suits documentation that should stay in version
-    control. Mermaid lays out dense graphs poorly; use `structure_to_dot`
-    when the graph is large.
+    extension, so it suits documentation that should stay in version control.
+
+    Raising `io_threshold` is the way to keep the result readable. Mermaid
+    lays the graph out on its own, and with many industries the repeated
+    factor and tax edges crowd each other.
 
     Args:
         p (OG-Core Specifications object): model parameters
@@ -1178,65 +1178,4 @@ def structure_to_mermaid(
             f"stroke:{s['ec']},color:{s['tc']}"
         )
         lines.append(f"    class {','.join(members)} {group}")
-    return "\n".join(lines)
-
-
-def structure_to_dot(
-    p, industry_names=None, good_names=None, io_threshold=0.01
-):
-    """
-    The structure as Graphviz DOT text. Graphviz ranks nodes and routes
-    edges far better than Mermaid, so this is the renderer to reach for once
-    a model has many industries. Emitting the text needs no extra
-    dependency; rendering it needs the Graphviz `dot` program.
-
-    Args:
-        p (OG-Core Specifications object): model parameters
-        industry_names (list): labels for the M industries
-        good_names (list): labels for the I consumption goods
-        io_threshold (scalar): omit coefficients below this share
-
-    Returns:
-        (str): DOT source, renderable with `dot -Tsvg`
-    """
-    nodes, edges = get_structure(p, industry_names, good_names, io_threshold)
-    lines = [
-        "digraph structure {",
-        "    rankdir=LR;",
-        "    splines=spline;",
-        "    bgcolor=transparent;",
-        '    node [shape=box, style="rounded,filled", '
-        'fontname="Helvetica", fontsize=10];',
-        '    edge [fontname="Helvetica", fontsize=8, penwidth=1.4];',
-    ]
-    for group, caption in _MERMAID_GROUPS:
-        members = [n for n, v in nodes.items() if v["group"] == group]
-        if not members:
-            continue
-        s = NODE_STYLES[group]
-        # As in the Mermaid output, a group of one gets no cluster around it.
-        grouped = len(members) > 1
-        if grouped:
-            lines.append(f"    subgraph cluster_{group} {{")
-            lines.append(
-                f'        label="{caption}"; color="#B4B2A9"; fontsize=9;'
-            )
-        indent = "        " if grouped else "    "
-        for nid in members:
-            detail = nodes[nid]["detail"]
-            label = nodes[nid]["label"] + (f"\\n{detail}" if detail else "")
-            lines.append(
-                f'{indent}{nid} [label="{label}", fillcolor="{s["fc"]}", '
-                f'color="{s["ec"]}", fontcolor="{s["tc"]}"];'
-            )
-        if grouped:
-            lines.append("    }")
-    for e in edges:
-        style = FLOW_STYLES[e["kind"]]
-        dashed = ', style="dashed"' if e["kind"] == "foreign" else ""
-        lines.append(
-            f'    {e["source"]} -> {e["target"]} [label="{e["label"]}", '
-            f'color="{style["color"]}"{dashed}];'
-        )
-    lines.append("}")
     return "\n".join(lines)

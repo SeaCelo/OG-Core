@@ -165,15 +165,6 @@ def test_mermaid_covers_every_node_and_edge(multi_industry_params):
     assert text.count("linkStyle ") == len(edges)
 
 
-def test_dot_is_balanced(multi_industry_params):
-    nodes, edges = structure_plots.get_structure(multi_industry_params)
-    text = structure_plots.structure_to_dot(multi_industry_params)
-    assert text.startswith("digraph structure {")
-    assert text.rstrip().endswith("}")
-    assert text.count("{") == text.count("}")
-    assert text.count(" -> ") == len(edges)
-
-
 def test_summarize_structure_reports_off_channels(default_params):
     summary = structure_plots.summarize_structure(default_params)
     assert summary["wealth tax"] is None
