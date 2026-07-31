@@ -29,12 +29,14 @@ The same structure feeds several renderers, for different uses:
 * `plot_io_heatmap`         -- the industry-to-good coefficients as a matrix
 * `plot_calibration_status` -- which values a country calibrated, and which
                                it inherited from OG-Core
-* `structure_to_mermaid`    -- text, renders natively in GitHub markdown.
-                               Defaults to the institutional graph, with the
-                               industries collapsed to one node, because
-                               every industry repeats the same factor and tax
-                               edges and no automatic layout survives that.
-                               Pass `bundle=False` for one node per industry.
+* `structure_to_mermaid`    -- text, for documentation kept in version
+                               control. Defaults to the institutional graph
+                               laid out by ELK: the industries collapse to one
+                               node, because every industry repeats the same
+                               factor and tax edges, and ELK routes what is
+                               left orthogonally. Pass `bundle=False` for one
+                               node per industry, and `layout=None` for output
+                               that renders on GitHub without a plugin.
 
 `plot_calibration_fit` sits alongside them and is the one figure here that
 looks at results rather than inputs: it draws the model-versus-target table a
@@ -1677,7 +1679,7 @@ def structure_to_mermaid(
     good_names=None,
     io_threshold=0.01,
     bundle=True,
-    layout=None,
+    layout="elk",
     link_width=2,
 ):
     """
@@ -1702,16 +1704,15 @@ def structure_to_mermaid(
             Set False for the full graph, one node per industry and one edge
             per coefficient, which is faithful but crowded above a few
             industries.
-        layout (str): pass "elk" to request Mermaid's ELK layout, which routes
-            edges orthogonally and brings each arrow into its node square-on.
-            Direction reads far better that way, and it is the only real
-            remedy available: Mermaid fixes the size of its arrowheads, and
-            neither a heavier link nor the thick-arrow syntax enlarges them.
-            ELK needs the `@mermaid-js/layout-elk` plugin registered in the
-            renderer, which GitHub does not load, so it is off by default.
-        link_width (scalar): stroke width for the edges, in px. Heavier links
-            read more clearly at a distance even though the arrowheads keep
-            their size.
+        layout (str): the Mermaid layout engine. Defaults to "elk", which
+            routes edges orthogonally and brings each one into its node
+            square-on, so a path is far easier to follow than under the
+            default engine's long curves. ELK needs the
+            `@mermaid-js/layout-elk` plugin registered in the renderer:
+            mermaid.live, the VS Code extension and a local build have it,
+            GitHub's own markdown rendering does not. Pass None for output
+            that renders anywhere.
+        link_width (scalar): stroke width for the edges, in px
 
     Returns:
         (str): Mermaid flowchart source

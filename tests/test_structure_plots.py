@@ -161,7 +161,7 @@ def test_mermaid_unbundled_covers_every_node_and_edge(multi_industry_params):
     text = structure_plots.structure_to_mermaid(
         multi_industry_params, bundle=False
     )
-    assert text.startswith("flowchart LR")
+    assert "flowchart LR" in text
     for nid in nodes:
         assert nid in text
     # One linkStyle per edge, so no edge is left with a default color.
@@ -328,7 +328,7 @@ def test_make_visuals_returns_objects_without_a_directory(
         multi_industry_params, ["circular_flow", "mermaid"]
     )
     assert isinstance(out["circular_flow"], matplotlib.figure.Figure)
-    assert out["mermaid"].startswith("flowchart LR")
+    assert "flowchart LR" in out["mermaid"]
     matplotlib.pyplot.close(out["circular_flow"])
 
 
@@ -368,12 +368,17 @@ def test_make_visuals_passes_options_through(multi_industry_params):
     assert "stroke-width:4px" in out["mermaid"]
 
 
-def test_mermaid_layout_directive_is_opt_in(multi_industry_params):
-    plain = structure_plots.structure_to_mermaid(multi_industry_params)
-    assert not plain.startswith("%%{init")
+def test_mermaid_defaults_to_elk_and_can_opt_out(multi_industry_params):
+    """
+    ELK is the default for its orthogonal routing. layout=None gives output
+    that renders on GitHub, which does not load the ELK plugin.
+    """
+    default = structure_plots.structure_to_mermaid(multi_industry_params)
+    assert default.startswith('%%{init: {"layout": "elk"}}%%')
+    assert "flowchart LR" in default
 
-    elk = structure_plots.structure_to_mermaid(
-        multi_industry_params, layout="elk"
+    portable = structure_plots.structure_to_mermaid(
+        multi_industry_params, layout=None
     )
-    assert elk.startswith('%%{init: {"layout": "elk"}}%%')
-    assert "flowchart LR" in elk
+    assert not portable.startswith("%%{init")
+    assert portable.startswith("flowchart LR")
