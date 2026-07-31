@@ -30,6 +30,10 @@ The same structure feeds several renderers, for different uses:
 * `plot_calibration_status` -- which values a country calibrated, and which
                                it inherited from OG-Core
 * `structure_to_mermaid`    -- text, renders natively in GitHub markdown
+
+`plot_calibration_fit` sits alongside them and is the one figure here that
+looks at results rather than inputs: it draws the model-versus-target table a
+country calibration reports, from moments the caller supplies.
 ------------------------------------------------------------------------
 """
 
@@ -1101,6 +1105,263 @@ def plot_calibration_status(
     )
     if include_title:
         ax.set_title("Calibration coverage by block", fontsize=13)
+
+    if path is None:
+        return fig
+    fig_path = os.path.join(path)
+    plt.savefig(fig_path, bbox_inches="tight", dpi=300)
+    plt.close()
+
+
+def plot_calibration_fit(
+    moments,
+    tolerances=(0.01, 0.05),
+    value_format="{:.4g}",
+    include_title=False,
+    path=None,
+):
+    """
+    How close a calibration lands to the moments it targets.
+
+    This is the figure form of the model-versus-target table a country
+    calibration reports. The table's real content is a set of distances, and
+    distances are easier to judge as positions than as pairs of numbers, so
+    the values stay on the page and the gap between them becomes the
+    horizontal axis. A moment on target sits on the centre line; the bands
+    say how far off is far.
+
+    Deviation is relative to the target, because the moments are on
+    incompatible scales -- a bequest yield of 0.0007 and a wealth-to-GDP
+    ratio of 3.35 cannot share a linear axis of levels.
+
+    Args:
+        moments (DataFrame or list): one row per targeted moment, with keys
+            `name`, `model` and `target`, and optionally `group` to band the
+            rows into blocks and `source` for the authority behind the
+            target. Rows keep the order given.
+        tolerances (tuple): the two relative deviations at which a moment
+            stops counting as on target and then as close, used for the
+            shaded bands and the dot colors
+        value_format (str): format for the model and target columns
+        include_title (bool): whether to include a title on the figure
+        path (str): path to save figure to
+
+    Returns:
+        fig (Matplotlib figure): the figure, if path is None
+    """
+    import pandas as pd
+
+    df = pd.DataFrame(moments).copy()
+    for column in ("name", "model", "target"):
+        if column not in df:
+            raise ValueError(f"moments needs a '{column}' column")
+    if "group" not in df:
+        df["group"] = ""
+    if "source" not in df:
+        df["source"] = ""
+
+    target = df["target"].astype(float)
+    model = df["model"].astype(float)
+    # Relative where the target is non-zero, absolute where it is not.
+    scale = target.abs().where(target.abs() > 0, 1.0)
+    df["deviation"] = (model - target) / scale
+
+    near, far = sorted(tolerances)
+
+    def band(dev):
+        if abs(dev) <= near:
+            return "on"
+        return "close" if abs(dev) <= far else "off"
+
+    df["band"] = df["deviation"].apply(band)
+    band_color = {
+        "on": "#1D9E75",
+        "close": "#EF9F27",
+        "off": "#D85A30",
+    }
+
+    # Lay the rows out top to bottom, leaving a gap where a group changes.
+    rows, y, previous = [], 0.0, None
+    for _, row in df.iterrows():
+        if previous is not None and row["group"] != previous:
+            y -= 0.75
+        rows.append((y, row))
+        previous = row["group"]
+        y -= 1.0
+    height = -y
+
+    worst = float(df["deviation"].abs().max())
+    limit = max(far * 1.6, worst * 1.7, 0.02)
+
+    # Column anchors in the left panel. Model and target are right-aligned so
+    # their digits line up; the source runs left from its own anchor.
+    x_name, x_model, x_target, x_source = 0.35, 0.50, 0.64, 0.67
+
+    fig, (left, right) = plt.subplots(
+        1,
+        2,
+        figsize=(11.6, 0.30 * height + 1.9),
+        gridspec_kw={"width_ratios": [1.45, 1.0], "wspace": 0.03},
+    )
+    for ax in (left, right):
+        ax.set_ylim(y - 0.4, 2.7)
+        ax.grid(False)
+
+    left.set_xlim(0, 1)
+    left.axis("off")
+
+    for x, header in ((x_model, "model"), (x_target, "target")):
+        left.text(
+            x,
+            1.05,
+            header,
+            ha="right",
+            va="center",
+            fontsize=8.5,
+            color="#5F5E5A",
+        )
+    left.text(
+        x_source,
+        1.05,
+        "source",
+        ha="left",
+        va="center",
+        fontsize=8.5,
+        color="#5F5E5A",
+    )
+
+    seen_groups = set()
+    for row_y, row in rows:
+        if row["group"] and row["group"] not in seen_groups:
+            seen_groups.add(row["group"])
+            left.text(
+                0.0,
+                row_y + 0.72,
+                row["group"],
+                ha="left",
+                va="center",
+                fontsize=9,
+                color="#26215C",
+            )
+        left.text(
+            x_name,
+            row_y,
+            row["name"],
+            ha="right",
+            va="center",
+            fontsize=9,
+            color="#131f25",
+        )
+        left.text(
+            x_model,
+            row_y,
+            value_format.format(float(row["model"])),
+            ha="right",
+            va="center",
+            fontsize=8.5,
+            color="#131f25",
+        )
+        left.text(
+            x_target,
+            row_y,
+            value_format.format(float(row["target"])),
+            ha="right",
+            va="center",
+            fontsize=8.5,
+            color="#5F5E5A",
+        )
+        if row["source"]:
+            left.text(
+                x_source,
+                row_y,
+                str(row["source"]),
+                ha="left",
+                va="center",
+                fontsize=7.5,
+                color="#8a8a84",
+            )
+
+    # A symmetric log axis, because deviations are heavy-tailed: one moment
+    # off by a factor of ten would otherwise flatten every other moment onto
+    # the centre line and hide the tolerance bands entirely. The region inside
+    # the tighter tolerance stays linear.
+    right.set_xscale("symlog", linthresh=near, linscale=0.9)
+    right.set_xlim(-limit, limit)
+    # Tick the tolerance edge and then whole decades. Ticking inside the
+    # linear region as well would pile labels on top of each other.
+    ticks = [0.0, -far, far]
+    if limit < 0.5:
+        ticks += [-near, near]
+    decade = 1.0
+    while decade <= limit:
+        ticks += [-decade, decade]
+        decade *= 10.0
+    right.set_xticks(sorted(set(ticks)))
+    right.axvspan(-far, far, color=band_color["close"], alpha=0.10, zorder=0)
+    right.axvspan(-near, near, color=band_color["on"], alpha=0.16, zorder=0)
+    right.axvline(0, color="#5F5E5A", linewidth=0.8, zorder=1)
+
+    for row_y, row in rows:
+        dev = float(row["deviation"])
+        color = band_color[row["band"]]
+        right.plot(
+            [0, dev],
+            [row_y, row_y],
+            color=color,
+            linestyle="-",
+            linewidth=1.2,
+            zorder=2,
+        )
+        right.plot(
+            [np.clip(dev, -limit * 0.985, limit * 0.985)],
+            [row_y],
+            marker="o",
+            markersize=6,
+            color=color,
+            zorder=3,
+        )
+        if abs(dev) > near:
+            right.text(
+                np.clip(dev, -limit * 0.985, limit * 0.985)
+                + limit * (0.035 if dev >= 0 else -0.035),
+                row_y,
+                f"{dev:+.1%}",
+                ha="left" if dev >= 0 else "right",
+                va="center",
+                fontsize=7.5,
+                color=color,
+            )
+
+    right.set_yticks([])
+    for spine in ("left", "right", "top"):
+        right.spines[spine].set_visible(False)
+    right.spines["bottom"].set_visible(True)
+    right.spines["bottom"].set_color("#D3D1C7")
+    right.tick_params(axis="x", labelsize=8, colors="#5F5E5A")
+    right.xaxis.set_major_formatter(lambda v, _: f"{v:+.0%}" if v else "0")
+    right.set_xlabel(
+        f"Deviation from target\nshaded bands: {near:.0%} and {far:.0%}",
+        fontsize=9,
+        color="#5F5E5A",
+        linespacing=1.5,
+    )
+
+    # The bands carry their own caption on the axis label, rather than a
+    # legend or in-plot labels, both of which collide once the linear region
+    # is narrow.
+    n_on = int((df["band"] == "on").sum())
+    right.text(
+        0,
+        1.9,
+        f"{n_on} of {len(df)} moments within {near:.0%} of target",
+        ha="center",
+        va="center",
+        fontsize=9.5,
+        color="#131f25",
+    )
+
+    if include_title:
+        fig.suptitle("Calibration fit to targeted moments", fontsize=13)
 
     if path is None:
         return fig

@@ -175,3 +175,60 @@ def test_summarize_structure_reports_off_channels(default_params):
     assert (
         structure_plots.summarize_structure(p)["remittances"] == "5.0% of GDP"
     )
+
+
+MOMENTS = [
+    {"group": "Revenue", "name": "PIT / Y", "model": 0.0312, "target": 0.0312},
+    {"group": "Revenue", "name": "CIT / Y", "model": 0.0421, "target": 0.0420},
+    {"group": "External", "name": "K_f / K", "model": 0.2027, "target": 0.20},
+    {"group": "External", "name": "RM / Y", "model": 0.0541, "target": 0.0812},
+]
+
+
+def test_calibration_fit_bands_by_distance():
+    """Each moment lands in the band its distance from target implies."""
+    fig = structure_plots.plot_calibration_fit(MOMENTS)
+    assert isinstance(fig, matplotlib.figure.Figure)
+    matplotlib.pyplot.close(fig)
+
+    # Exact, 0.24%, 1.35% and -33% off, against tolerances of 1% and 5%.
+    deviations = [
+        (row["model"] - row["target"]) / abs(row["target"]) for row in MOMENTS
+    ]
+    assert abs(deviations[0]) < 0.01
+    assert abs(deviations[1]) < 0.01
+    assert 0.01 < abs(deviations[2]) < 0.05
+    assert abs(deviations[3]) > 0.05
+
+
+def test_calibration_fit_saves_to_path(tmp_path):
+    out = tmp_path / "fit.png"
+    assert structure_plots.plot_calibration_fit(MOMENTS, path=str(out)) is None
+    assert out.exists()
+
+
+def test_calibration_fit_needs_model_and_target():
+    with pytest.raises(ValueError):
+        structure_plots.plot_calibration_fit(
+            [{"name": "PIT / Y", "model": 0.03}]
+        )
+
+
+def test_calibration_fit_handles_a_zero_target():
+    """A zero target falls back to an absolute deviation, without dividing."""
+    fig = structure_plots.plot_calibration_fit(
+        [{"name": "UBI / Y", "model": 0.004, "target": 0.0}]
+    )
+    assert isinstance(fig, matplotlib.figure.Figure)
+    matplotlib.pyplot.close(fig)
+
+
+def test_calibration_fit_handles_an_exact_calibration():
+    """Every moment on target still gives a usable axis."""
+    exact = [
+        {"name": "D / Y", "model": 0.6, "target": 0.6},
+        {"name": "K_f / K", "model": 0.2, "target": 0.2},
+    ]
+    fig = structure_plots.plot_calibration_fit(exact)
+    assert isinstance(fig, matplotlib.figure.Figure)
+    matplotlib.pyplot.close(fig)
