@@ -1566,12 +1566,19 @@ def structure_to_mermaid(
         members = [n for n, v in nodes.items() if v["group"] == group]
         if not members:
             continue
-        lines.append(f'    subgraph {group}["{caption}"]')
+        # A group of one needs no wrapper: its caption would just repeat the
+        # node's own label.
+        grouped = len(members) > 1
+        if grouped:
+            lines.append(f'    subgraph {group}["{caption}"]')
         for nid in members:
             detail = nodes[nid]["detail"]
             label = nodes[nid]["label"] + (f" ({detail})" if detail else "")
-            lines.append(f'        {nid}["{label}"]')
-        lines.append("    end")
+            lines.append(
+                f'{"        " if grouped else "    "}{nid}["{label}"]'
+            )
+        if grouped:
+            lines.append("    end")
     for e in edges:
         lines.append(f'    {e["source"]} -- "{e["label"]}" --> {e["target"]}')
     for idx, e in enumerate(edges):
@@ -1627,18 +1634,23 @@ def structure_to_dot(
         if not members:
             continue
         s = NODE_STYLES[group]
-        lines.append(f"    subgraph cluster_{group} {{")
-        lines.append(
-            f'        label="{caption}"; color="#B4B2A9"; fontsize=9;'
-        )
+        # As in the Mermaid output, a group of one gets no cluster around it.
+        grouped = len(members) > 1
+        if grouped:
+            lines.append(f"    subgraph cluster_{group} {{")
+            lines.append(
+                f'        label="{caption}"; color="#B4B2A9"; fontsize=9;'
+            )
+        indent = "        " if grouped else "    "
         for nid in members:
             detail = nodes[nid]["detail"]
             label = nodes[nid]["label"] + (f"\\n{detail}" if detail else "")
             lines.append(
-                f'        {nid} [label="{label}", fillcolor="{s["fc"]}", '
+                f'{indent}{nid} [label="{label}", fillcolor="{s["fc"]}", '
                 f'color="{s["ec"]}", fontcolor="{s["tc"]}"];'
             )
-        lines.append("    }")
+        if grouped:
+            lines.append("    }")
     for e in edges:
         style = FLOW_STYLES[e["kind"]]
         dashed = ', style="dashed"' if e["kind"] == "foreign" else ""
