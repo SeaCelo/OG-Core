@@ -116,11 +116,20 @@ PARAM_BLOCKS = {
     ],
 }
 
-# Fill colors for the calibration status of a parameter or a block.
+# Fill colors for the calibration status of a parameter, used where status is
+# the subject of the figure.
 STATUS_COLORS = {
     "calibrated": "#1D9E75",
     "default": "#EF9F27",
     "missing": "#D3D1C7",
+}
+
+# Muted versions of the same, for the chip rows tucked inside the boxes of a
+# structural diagram, where calibration is a secondary annotation.
+STATUS_TINTS = {
+    "calibrated": "#96D3BB",
+    "default": "#F7D296",
+    "missing": "#E4E2DA",
 }
 
 
@@ -466,11 +475,13 @@ def _box(
     """
     Draw one labelled node box, returning its bounding box.
 
-    When `status` is a (n_calibrated, n_present) pair, a bar along the bottom
-    edge shows what share of the box's governing parameters carry
-    country-calibrated values, with the count in the corner. Border style is
-    left alone deliberately: dashes already mean a cross-border flow on the
-    arrows, and one visual channel should carry one meaning.
+    When `status` is a list of per-parameter statuses, a row of small chips
+    along the bottom edge shows one chip per governing parameter, in the same
+    order and reading as the same colors as `plot_calibration_status`, with
+    the count in the corner. The chips use muted tints and a capped width:
+    they are a footnote on the box, not a second subject competing with the
+    flows. Border style is left alone deliberately, because dashes already
+    mean a cross-border flow on the arrows.
     """
     style = NODE_STYLES[group]
     ax.add_patch(
@@ -485,45 +496,34 @@ def _box(
             zorder=3,
         )
     )
-    if status is not None and status[1]:
-        n_cal, n_present = status
-        bar_h = min(0.9, h * 0.09)
-        share = n_cal / n_present
-        ax.add_patch(
-            FancyBboxPatch(
-                (x + 1.2, y + 0.7),
-                (w - 2.4) * share,
-                bar_h,
-                boxstyle="square,pad=0",
-                linewidth=0,
-                facecolor=STATUS_COLORS["calibrated"],
-                zorder=5,
-            )
-        )
-        if n_cal < n_present:
+    if status:
+        n = len(status)
+        n_cal = sum(s == "calibrated" for s in status)
+        gap = 0.3
+        chip_w = min(1.9, (w - 2.4 - gap * (n - 1)) / n)
+        chip_h = min(0.7, h * 0.07)
+        row_w = n * chip_w + gap * (n - 1)
+        x0 = x + (w - row_w) / 2
+        for k, state in enumerate(status):
             ax.add_patch(
                 FancyBboxPatch(
-                    (x + 1.2 + (w - 2.4) * share, y + 0.7),
-                    (w - 2.4) * (1 - share),
-                    bar_h,
+                    (x0 + k * (chip_w + gap), y + 0.85),
+                    chip_w,
+                    chip_h,
                     boxstyle="square,pad=0",
                     linewidth=0,
-                    facecolor=STATUS_COLORS["default"],
+                    facecolor=STATUS_TINTS[state],
                     zorder=5,
                 )
             )
         ax.text(
             x + w - 1.0,
             y + h - 1.0,
-            f"{n_cal}/{n_present}",
+            f"{n_cal}/{n}",
             ha="right",
             va="top",
-            fontsize=7.5,
-            color=(
-                STATUS_COLORS["calibrated"]
-                if n_cal == n_present
-                else STATUS_COLORS["default"]
-            ),
+            fontsize=7,
+            color="#5F5E5A",
             zorder=5,
         )
     if subtitle:
@@ -624,9 +624,9 @@ def plot_circular_flow(
         p (OG-Core Specifications object): model parameters
         industry_names (list): labels for the M industries
         good_names (list): labels for the I consumption goods
-        show_calibration (bool): mark each box with how many of its
-            governing parameters carry country-calibrated values, dashing the
-            border of any box that still rests on an OG-Core default
+        show_calibration (bool): tuck a row of small chips into each box, one
+            per governing parameter, coloured by whether it carries a
+            country-calibrated value or an OG-Core default
         calibrated_params (set, list or dict): passed to
             `calibration_status`, to name the calibrated parameters exactly
             rather than inferring them
@@ -639,7 +639,15 @@ def plot_circular_flow(
     industry_names, good_names = _labels(p, industry_names, good_names)
 
     if show_calibration:
-        _, blocks = calibration_status(p, calibrated_params)
+        status, _ = calibration_status(p, calibrated_params)
+        blocks = {
+            block: [
+                status[n]
+                for n in dict.fromkeys(names)
+                if status[n] != "missing"
+            ]
+            for block, names in PARAM_BLOCKS.items()
+        }
     else:
         blocks = {}
 
@@ -792,11 +800,11 @@ def plot_circular_flow(
     if show_calibration:
         handles += [
             Patch(
-                facecolor=STATUS_COLORS["calibrated"],
+                facecolor=STATUS_TINTS["calibrated"],
                 label="Country-calibrated parameters",
             ),
             Patch(
-                facecolor=STATUS_COLORS["default"],
+                facecolor=STATUS_TINTS["default"],
                 label="Left at OG-Core default",
             ),
         ]
