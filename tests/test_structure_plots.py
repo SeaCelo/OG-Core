@@ -108,24 +108,35 @@ def test_calibration_status_flags_changed_values(default_params):
     assert blocks["government"][0] == 1
 
 
-def test_calibration_status_honors_explicit_names(default_params):
-    """A parameter named by the caller counts even at the default value."""
-    status, _ = structure_plots.calibration_status(
-        default_params, calibrated_params=[{"sigma": 1.5}]
+def test_broadcast_across_dimensions_is_not_a_calibration(default_params):
+    """
+    Spreading OG-Core's own value across new industries is not calibration;
+    changing that value is.
+    """
+    reference = float(np.atleast_1d(default_params.epsilon)[0])
+
+    spread = Specifications()
+    spread.update_specifications({"M": 3, "epsilon": [reference] * 3})
+    assert (
+        structure_plots.calibration_status(spread)[0]["epsilon"] == "default"
     )
-    assert status["sigma"] == "calibrated"
-    assert status["frisch"] == "default"
+
+    changed = Specifications()
+    changed.update_specifications(
+        {"M": 3, "epsilon": [reference, reference, reference + 0.4]}
+    )
+    status = structure_plots.calibration_status(changed)[0]
+    assert status["epsilon"] == "calibrated"
 
 
 @pytest.mark.parametrize(
     "plot_func",
     [
         structure_plots.plot_circular_flow,
-        structure_plots.plot_io_bridge,
         structure_plots.plot_io_heatmap,
         structure_plots.plot_calibration_status,
     ],
-    ids=["circular_flow", "io_bridge", "io_heatmap", "calibration_status"],
+    ids=["circular_flow", "io_heatmap", "calibration_status"],
 )
 def test_plots_return_figures(plot_func, multi_industry_params):
     fig = plot_func(multi_industry_params)

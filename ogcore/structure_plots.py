@@ -25,12 +25,13 @@ Two kinds of information go into the diagrams:
 
 The same structure feeds several renderers, for different uses:
 
-* `plot_circular_flow`   -- a figure for documents and slides
-* `plot_io_bridge`       -- the industry-to-good coefficients, as ribbons
-* `plot_io_heatmap`      -- the same coefficients as a matrix, for large M
-* `structure_to_mermaid` -- text, renders natively in GitHub markdown
-* `structure_to_dot`     -- text for Graphviz, which lays out dense graphs
-                            far better than Mermaid
+* `plot_circular_flow`      -- a figure for documents and slides
+* `plot_io_heatmap`         -- the industry-to-good coefficients as a matrix
+* `plot_calibration_status` -- which values a country calibrated, and which
+                               it inherited from OG-Core
+* `structure_to_mermaid`    -- text, renders natively in GitHub markdown
+* `structure_to_dot`        -- text for Graphviz, which lays out dense
+                               graphs far better than Mermaid
 ------------------------------------------------------------------------
 """
 
@@ -190,7 +191,14 @@ PARAM_SYMBOLS = {
 
 
 def _differs(a, b):
-    """Whether two parameter values differ, tolerating shape changes."""
+    """
+    Whether two parameter values differ in substance rather than in shape.
+
+    Comparison broadcasts, so gaining a dimension is not by itself a
+    difference: a country that moves to eight industries but gives every one
+    of them OG-Core's single elasticity has not calibrated that elasticity,
+    and it reads as inherited. Only a value that actually changes counts.
+    """
     if isinstance(a, str) or isinstance(b, str):
         return a != b
     try:
@@ -198,33 +206,33 @@ def _differs(a, b):
         arr_b = np.atleast_1d(np.asarray(b, dtype=float))
     except (TypeError, ValueError):
         return a != b
-    if arr_a.shape != arr_b.shape:
+    try:
+        return not np.allclose(
+            arr_a, arr_b, rtol=1e-9, atol=1e-12, equal_nan=True
+        )
+    except ValueError:
+        # Shapes that will not broadcast against each other at all.
         return True
-    return not np.allclose(arr_a, arr_b, rtol=1e-9, atol=1e-12, equal_nan=True)
 
 
-def calibration_status(p, calibrated_params=None):
+def calibration_status(p):
     """
     Report which structural parameters carry country-calibrated values and
     which still hold the value OG-Core ships.
 
-    A parameter counts as calibrated when its value differs from the one
-    OG-Core ships. That alone catches parameters a country sets indirectly:
-    `tau_b`, for instance, is derived from `cit_rate`, so the name a country
-    writes down is not the name the model carries.
+    A parameter counts as calibrated when its value differs from OG-Core's,
+    and only then. Writing a parameter into a country's own file does not
+    make it calibrated if the number written is the one OG-Core already used;
+    neither does spreading that number across a new set of industries. What
+    matters is whether the model is running on the country's evidence.
 
-    Passing `calibrated_params` adds a second signal, the names the
-    calibration actually set. It settles the case value comparison cannot
-    see: a country that deliberately adopted OG-Core's number for a
-    parameter did make a choice, and reads as calibrated rather than
-    inherited. The two signals are combined, never traded off.
+    Comparing values rather than parameter names also catches parameters a
+    country sets indirectly. `tau_b`, for instance, is derived from
+    `cit_rate`, so the name a country writes down is not the name the model
+    ends up carrying.
 
     Args:
         p (OG-Core Specifications object): model parameters
-        calibrated_params (set, list or dict): names of the parameters the
-            calibration actually set. A dict is read for its keys, so the
-            JSON overlays a country package applies can be passed straight
-            in. When None, only value comparison is used.
 
     Returns:
         status (dict): parameter name mapped to "calibrated", "default" or
@@ -237,21 +245,11 @@ def calibration_status(p, calibrated_params=None):
     names = [n for block in PARAM_BLOCKS.values() for n in block]
     reference = Specifications()
 
-    explicit = set()
-    if calibrated_params is not None:
-        if isinstance(calibrated_params, dict):
-            explicit = set(calibrated_params)
-        else:
-            for item in calibrated_params:
-                explicit.update(item if isinstance(item, dict) else [item])
-
     status = {}
     for name in names:
         if not hasattr(p, name):
             status[name] = "missing"
-        elif name in explicit or _differs(
-            getattr(p, name), getattr(reference, name, None)
-        ):
+        elif _differs(getattr(p, name), getattr(reference, name, None)):
             status[name] = "calibrated"
         else:
             status[name] = "default"
@@ -699,7 +697,6 @@ def plot_circular_flow(
     industry_names=None,
     good_names=None,
     show_calibration=True,
-    calibrated_params=None,
     include_title=False,
     path=None,
 ):
@@ -719,9 +716,6 @@ def plot_circular_flow(
         show_calibration (bool): tuck a row of small chips into each box, one
             per governing parameter, coloured by whether it carries a
             country-calibrated value or an OG-Core default
-        calibrated_params (set, list or dict): passed to
-            `calibration_status`, to name the calibrated parameters exactly
-            rather than inferring them
         include_title (bool): whether to include a title on the figure
         path (str): path to save figure to
 
@@ -731,7 +725,7 @@ def plot_circular_flow(
     industry_names, good_names = _labels(p, industry_names, good_names)
 
     if show_calibration:
-        status, _ = calibration_status(p, calibrated_params)
+        status, _ = calibration_status(p)
         blocks = {
             block: [
                 (n, status[n])
@@ -920,140 +914,6 @@ def plot_circular_flow(
     plt.close()
 
 
-def plot_io_bridge(
-    p,
-    industry_names=None,
-    good_names=None,
-    io_threshold=0.05,
-    include_title=False,
-    path=None,
-):
-    """
-    The `io_matrix` coefficients as weighted ribbons from each production
-    industry to each consumption good. Ribbon width is the coefficient, so
-    the industry that dominates a consumption good is visible at a glance.
-
-    Best below roughly ten industries. Above that the ribbons overlap and
-    `plot_io_heatmap` reads more clearly.
-
-    Args:
-        p (OG-Core Specifications object): model parameters
-        industry_names (list): labels for the M industries
-        good_names (list): labels for the I consumption goods
-        io_threshold (scalar): omit coefficients below this share
-        include_title (bool): whether to include a title on the figure
-        path (str): path to save figure to
-
-    Returns:
-        fig (Matplotlib figure): the figure, if path is None
-    """
-    industry_names, good_names = _labels(p, industry_names, good_names)
-    io = np.atleast_2d(p.io_matrix)
-    alpha_c = np.atleast_1d(p.alpha_c)
-
-    # One unit of height per row, so the geometry does not depend on M or I.
-    rows = max(p.M, p.I)
-    box_h, pitch = 0.62, 1.0
-    top = rows * pitch
-
-    fig, ax = plt.subplots(figsize=(9.6, 0.66 * rows + 1.7))
-    ax.set_xlim(0, 100)
-    ax.set_ylim(-0.9, top + 0.5)
-    ax.axis("off")
-    ax.grid(False)
-
-    def centers(n):
-        offset = (rows - n) * pitch / 2
-        return {k: top - offset - (k + 0.5) * pitch for k in range(n)}
-
-    ind_y, good_y = centers(p.M), centers(p.I)
-
-    order = sorted(
-        (
-            (io[i, m], i, m)
-            for i in range(io.shape[0])
-            for m in range(io.shape[1])
-            if io[i, m] > io_threshold
-        )
-    )
-    for share, i, m in order:
-        # linestyle is pinned because OGcorePlots cycles it, and a dashed
-        # ribbon here would read as a different kind of flow.
-        ax.plot(
-            [31, 67],
-            [ind_y[m], good_y[i]],
-            color=FLOW_STYLES["real"]["color"],
-            linestyle="-",
-            alpha=0.30 + 0.45 * share,
-            linewidth=0.5 + 7.0 * share,
-            solid_capstyle="round",
-            zorder=1,
-        )
-
-    for m, name in enumerate(industry_names):
-        _box(
-            ax,
-            4,
-            ind_y[m] - box_h / 2,
-            27,
-            box_h,
-            name,
-            "",
-            "industry",
-            title_size=9,
-            rounding=0.12,
-        )
-    for i, name in enumerate(good_names):
-        lead = io[i].argmax()
-        _box(
-            ax,
-            67,
-            good_y[i] - box_h / 2,
-            25,
-            box_h,
-            name,
-            "",
-            "good",
-            title_size=9,
-            rounding=0.12,
-        )
-        ax.text(
-            93.5,
-            good_y[i] + 0.11,
-            f"{alpha_c[i]:.0%} of consumption",
-            ha="left",
-            va="center",
-            fontsize=7.5,
-            color=NODE_STYLES["good"]["tc"],
-        )
-        ax.text(
-            93.5,
-            good_y[i] - 0.15,
-            f"{io[i, lead]:.0%} {industry_names[lead].lower()}",
-            ha="left",
-            va="center",
-            fontsize=7.5,
-            color=NODE_STYLES["good"]["ec"],
-        )
-
-    ax.text(
-        4,
-        -0.55,
-        "Ribbon width is the share of the consumption good supplied by that "
-        f"industry; shares below {io_threshold:.0%} are omitted",
-        fontsize=8,
-        color="#5F5E5A",
-    )
-    if include_title:
-        ax.set_title("Production industries to consumption goods", fontsize=13)
-
-    if path is None:
-        return fig
-    fig_path = os.path.join(path)
-    plt.savefig(fig_path, bbox_inches="tight", dpi=300)
-    plt.close()
-
-
 def plot_io_heatmap(
     p,
     industry_names=None,
@@ -1062,9 +922,12 @@ def plot_io_heatmap(
     path=None,
 ):
     """
-    The `io_matrix` as a matrix of coefficients. Unlike `plot_io_bridge`
-    this has no layout to crowd, so it stays readable for any number of
-    industries, shows exact values, and makes structural zeros obvious.
+    The `io_matrix` as a matrix of coefficients: how much of each production
+    industry's output composes each consumption good.
+
+    Preferred over any node-and-edge rendering of the same coefficients,
+    because a matrix has no layout to crowd. It stays readable for any number
+    of industries, shows exact values, and makes structural zeros obvious.
 
     Args:
         p (OG-Core Specifications object): model parameters
@@ -1115,285 +978,6 @@ def plot_io_heatmap(
     plt.close()
 
 
-def plot_io_chord(
-    p,
-    industry_names=None,
-    good_names=None,
-    io_threshold=0.05,
-    include_title=False,
-    path=None,
-):
-    """
-    The `io_matrix` coefficients as chords across a circle, industries on one
-    arc and consumption goods on the other.
-
-    Included for comparison with `plot_io_bridge` and `plot_io_heatmap`. It
-    is the least useful of the three: the circle spends most of its area on
-    empty space, and a chord's width is harder to compare than a ribbon's or
-    a matrix cell's. Reach for it when the point is that the bridge matrix is
-    dense rather than what any particular coefficient is.
-
-    Args:
-        p (OG-Core Specifications object): model parameters
-        industry_names (list): labels for the M industries
-        good_names (list): labels for the I consumption goods
-        io_threshold (scalar): omit coefficients below this share
-        include_title (bool): whether to include a title on the figure
-        path (str): path to save figure to
-
-    Returns:
-        fig (Matplotlib figure): the figure, if path is None
-    """
-    industry_names, good_names = _labels(p, industry_names, good_names)
-    io = np.atleast_2d(p.io_matrix)
-
-    fig, ax = plt.subplots(figsize=(8.2, 8.2))
-    ax.set_xlim(-1.55, 1.55)
-    ax.set_ylim(-1.55, 1.55)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.grid(False)
-
-    # Industries occupy the left half of the circle, goods the right, with a
-    # gap at top and bottom so the two groups read as separate arcs.
-    def arc(n, start, end):
-        span = np.linspace(start, end, n + 2)[1:-1]
-        return {k: span[k] for k in range(n)}
-
-    ind_a = arc(p.M, np.pi / 2 + 0.16, 3 * np.pi / 2 - 0.16)
-    good_a = arc(p.I, -np.pi / 2 + 0.16, np.pi / 2 - 0.16)
-
-    order = sorted(
-        (
-            (io[i, m], i, m)
-            for i in range(io.shape[0])
-            for m in range(io.shape[1])
-            if io[i, m] > io_threshold
-        )
-    )
-    for share, i, m in order:
-        a0, a1 = ind_a[m], good_a[i]
-        x0, y0 = np.cos(a0), np.sin(a0)
-        x1, y1 = np.cos(a1), np.sin(a1)
-        # A quadratic pulled toward the centre, so chords bundle inward.
-        t = np.linspace(0, 1, 60)
-        cx, cy = 0.12 * (x0 + x1), 0.12 * (y0 + y1)
-        bx = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t**2 * x1
-        by = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t**2 * y1
-        ax.plot(
-            bx,
-            by,
-            color=FLOW_STYLES["real"]["color"],
-            linestyle="-",
-            alpha=0.28 + 0.45 * share,
-            linewidth=0.5 + 6.0 * share,
-            solid_capstyle="round",
-            zorder=1,
-        )
-
-    for angles, names, group in (
-        (ind_a, industry_names, "industry"),
-        (good_a, good_names, "good"),
-    ):
-        for k, name in enumerate(names):
-            a = angles[k]
-            x, y = np.cos(a), np.sin(a)
-            ax.plot(
-                [x],
-                [y],
-                marker="o",
-                markersize=7,
-                color=NODE_STYLES[group]["ec"],
-                zorder=3,
-            )
-            right = np.cos(a) >= 0
-            ax.text(
-                x * 1.09,
-                y * 1.09,
-                name,
-                ha="left" if right else "right",
-                va="center",
-                rotation=np.degrees(a) + (0 if right else 180),
-                rotation_mode="anchor",
-                fontsize=9,
-                color=NODE_STYLES[group]["tc"],
-                zorder=4,
-            )
-
-    ax.legend(
-        handles=[
-            Patch(
-                facecolor=NODE_STYLES["industry"]["fc"],
-                edgecolor=NODE_STYLES["industry"]["ec"],
-                label="Production industries",
-            ),
-            Patch(
-                facecolor=NODE_STYLES["good"]["fc"],
-                edgecolor=NODE_STYLES["good"]["ec"],
-                label="Consumption goods",
-            ),
-        ],
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.04),
-        ncol=2,
-        frameon=False,
-        fontsize=9,
-    )
-    if include_title:
-        ax.set_title("Input-output bridge, as chords", fontsize=13)
-
-    if path is None:
-        return fig
-    fig_path = os.path.join(path)
-    plt.savefig(fig_path, bbox_inches="tight", dpi=300)
-    plt.close()
-
-
-def plot_parameterization_diff(
-    p,
-    p2,
-    labels=("baseline", "comparison"),
-    include_title=False,
-    path=None,
-):
-    """
-    Which structural parameters two parameterizations disagree on.
-
-    Use it to see what a recalibration or a reform actually moved, and to
-    check that it moved nothing else. A parameter can differ in value or in
-    shape; a shape change means the two runs are not the same model, so the
-    two cases are marked apart.
-
-    Args:
-        p (OG-Core Specifications object): the reference parameters
-        p2 (OG-Core Specifications object): the parameters to compare
-        labels (tuple): names for the two parameterizations
-        include_title (bool): whether to include a title on the figure
-        path (str): path to save figure to
-
-    Returns:
-        fig (Matplotlib figure): the figure, if path is None
-    """
-    captions = {
-        "household": "Households",
-        "industry": "Industries",
-        "good": "Goods and consumption",
-        "government": "Government",
-        "foreign": "Rest of world",
-    }
-    colors = {
-        "same": "#E4E2DA",
-        "value": "#EF9F27",
-        "shape": "#D85A30",
-    }
-    ink = {"same": "#5F5E5A", "value": "#412402", "shape": "#FFFFFF"}
-
-    def classify(name):
-        if not hasattr(p, name) or not hasattr(p2, name):
-            return None
-        a, b = getattr(p, name), getattr(p2, name)
-        if not _differs(a, b):
-            return "same"
-        try:
-            shape_a = np.atleast_1d(np.asarray(a, dtype=float)).shape
-            shape_b = np.atleast_1d(np.asarray(b, dtype=float)).shape
-        except (TypeError, ValueError):
-            return "value"
-        return "shape" if shape_a != shape_b else "value"
-
-    rows = []
-    for block, block_names in PARAM_BLOCKS.items():
-        states = [
-            (n, classify(n))
-            for n in dict.fromkeys(block_names)
-            if classify(n) is not None
-        ]
-        rows.append((block, states))
-    n_cols = max(len(states) for _, states in rows)
-
-    margin = 4.6
-    fig, ax = plt.subplots(
-        figsize=(0.86 * (n_cols + margin) + 0.6, 0.95 * len(rows) + 1.7)
-    )
-    ax.set_xlim(-margin, n_cols + 0.2)
-    ax.set_ylim(-1.5, len(rows))
-    ax.axis("off")
-    ax.grid(False)
-
-    for r, (block, states) in enumerate(rows):
-        y = len(rows) - 1 - r
-        n_diff = sum(state != "same" for _, state in states)
-        ax.text(
-            -0.35,
-            y + 0.16,
-            captions[block],
-            ha="right",
-            va="center",
-            fontsize=10,
-            color=NODE_STYLES[block]["tc"],
-        )
-        ax.text(
-            -0.35,
-            y - 0.20,
-            f"{n_diff} of {len(states)} differ",
-            ha="right",
-            va="center",
-            fontsize=8,
-            color="#5F5E5A",
-        )
-        for c, (name, state) in enumerate(states):
-            ax.add_patch(
-                FancyBboxPatch(
-                    (c + 0.06, y - 0.34),
-                    0.88,
-                    0.68,
-                    boxstyle="round,pad=0,rounding_size=0.06",
-                    linewidth=0,
-                    facecolor=colors[state],
-                    zorder=2,
-                )
-            )
-            ax.text(
-                c + 0.5,
-                y,
-                _wrap_param(name),
-                ha="center",
-                va="center",
-                fontsize=6.6,
-                linespacing=1.25,
-                color=ink[state],
-                zorder=3,
-            )
-
-    ax.text(
-        -margin + 0.1,
-        -1.15,
-        f"Comparing {labels[0]} with {labels[1]}",
-        fontsize=8.5,
-        color="#5F5E5A",
-    )
-    ax.legend(
-        handles=[
-            Patch(facecolor=colors["shape"], label="Dimensions differ"),
-            Patch(facecolor=colors["value"], label="Value differs"),
-            Patch(facecolor=colors["same"], label="Identical"),
-        ],
-        loc="lower left",
-        bbox_to_anchor=(0.0, -0.02),
-        ncol=3,
-        frameon=False,
-        fontsize=9,
-    )
-    if include_title:
-        ax.set_title("What the two parameterizations disagree on", fontsize=13)
-
-    if path is None:
-        return fig
-    fig_path = os.path.join(path)
-    plt.savefig(fig_path, bbox_inches="tight", dpi=300)
-    plt.close()
-
-
 def _wrap_param(name, width=11):
     """Break a parameter name at underscores so it fits inside a tile."""
     lines, current = [], ""
@@ -1410,7 +994,6 @@ def _wrap_param(name, width=11):
 
 def plot_calibration_status(
     p,
-    calibrated_params=None,
     include_title=False,
     path=None,
 ):
@@ -1425,16 +1008,13 @@ def plot_calibration_status(
 
     Args:
         p (OG-Core Specifications object): model parameters
-        calibrated_params (set, list or dict): passed to
-            `calibration_status`, to name the calibrated parameters exactly
-            rather than inferring them
         include_title (bool): whether to include a title on the figure
         path (str): path to save figure to
 
     Returns:
         fig (Matplotlib figure): the figure, if path is None
     """
-    status, blocks = calibration_status(p, calibrated_params)
+    status, blocks = calibration_status(p)
 
     captions = {
         "household": "Households",
