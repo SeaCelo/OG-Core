@@ -1115,6 +1115,285 @@ def plot_io_heatmap(
     plt.close()
 
 
+def plot_io_chord(
+    p,
+    industry_names=None,
+    good_names=None,
+    io_threshold=0.05,
+    include_title=False,
+    path=None,
+):
+    """
+    The `io_matrix` coefficients as chords across a circle, industries on one
+    arc and consumption goods on the other.
+
+    Included for comparison with `plot_io_bridge` and `plot_io_heatmap`. It
+    is the least useful of the three: the circle spends most of its area on
+    empty space, and a chord's width is harder to compare than a ribbon's or
+    a matrix cell's. Reach for it when the point is that the bridge matrix is
+    dense rather than what any particular coefficient is.
+
+    Args:
+        p (OG-Core Specifications object): model parameters
+        industry_names (list): labels for the M industries
+        good_names (list): labels for the I consumption goods
+        io_threshold (scalar): omit coefficients below this share
+        include_title (bool): whether to include a title on the figure
+        path (str): path to save figure to
+
+    Returns:
+        fig (Matplotlib figure): the figure, if path is None
+    """
+    industry_names, good_names = _labels(p, industry_names, good_names)
+    io = np.atleast_2d(p.io_matrix)
+
+    fig, ax = plt.subplots(figsize=(8.2, 8.2))
+    ax.set_xlim(-1.55, 1.55)
+    ax.set_ylim(-1.55, 1.55)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.grid(False)
+
+    # Industries occupy the left half of the circle, goods the right, with a
+    # gap at top and bottom so the two groups read as separate arcs.
+    def arc(n, start, end):
+        span = np.linspace(start, end, n + 2)[1:-1]
+        return {k: span[k] for k in range(n)}
+
+    ind_a = arc(p.M, np.pi / 2 + 0.16, 3 * np.pi / 2 - 0.16)
+    good_a = arc(p.I, -np.pi / 2 + 0.16, np.pi / 2 - 0.16)
+
+    order = sorted(
+        (
+            (io[i, m], i, m)
+            for i in range(io.shape[0])
+            for m in range(io.shape[1])
+            if io[i, m] > io_threshold
+        )
+    )
+    for share, i, m in order:
+        a0, a1 = ind_a[m], good_a[i]
+        x0, y0 = np.cos(a0), np.sin(a0)
+        x1, y1 = np.cos(a1), np.sin(a1)
+        # A quadratic pulled toward the centre, so chords bundle inward.
+        t = np.linspace(0, 1, 60)
+        cx, cy = 0.12 * (x0 + x1), 0.12 * (y0 + y1)
+        bx = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t**2 * x1
+        by = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t**2 * y1
+        ax.plot(
+            bx,
+            by,
+            color=FLOW_STYLES["real"]["color"],
+            linestyle="-",
+            alpha=0.28 + 0.45 * share,
+            linewidth=0.5 + 6.0 * share,
+            solid_capstyle="round",
+            zorder=1,
+        )
+
+    for angles, names, group in (
+        (ind_a, industry_names, "industry"),
+        (good_a, good_names, "good"),
+    ):
+        for k, name in enumerate(names):
+            a = angles[k]
+            x, y = np.cos(a), np.sin(a)
+            ax.plot(
+                [x],
+                [y],
+                marker="o",
+                markersize=7,
+                color=NODE_STYLES[group]["ec"],
+                zorder=3,
+            )
+            right = np.cos(a) >= 0
+            ax.text(
+                x * 1.09,
+                y * 1.09,
+                name,
+                ha="left" if right else "right",
+                va="center",
+                rotation=np.degrees(a) + (0 if right else 180),
+                rotation_mode="anchor",
+                fontsize=9,
+                color=NODE_STYLES[group]["tc"],
+                zorder=4,
+            )
+
+    ax.legend(
+        handles=[
+            Patch(
+                facecolor=NODE_STYLES["industry"]["fc"],
+                edgecolor=NODE_STYLES["industry"]["ec"],
+                label="Production industries",
+            ),
+            Patch(
+                facecolor=NODE_STYLES["good"]["fc"],
+                edgecolor=NODE_STYLES["good"]["ec"],
+                label="Consumption goods",
+            ),
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.04),
+        ncol=2,
+        frameon=False,
+        fontsize=9,
+    )
+    if include_title:
+        ax.set_title("Input-output bridge, as chords", fontsize=13)
+
+    if path is None:
+        return fig
+    fig_path = os.path.join(path)
+    plt.savefig(fig_path, bbox_inches="tight", dpi=300)
+    plt.close()
+
+
+def plot_parameterization_diff(
+    p,
+    p2,
+    labels=("baseline", "comparison"),
+    include_title=False,
+    path=None,
+):
+    """
+    Which structural parameters two parameterizations disagree on.
+
+    Use it to see what a recalibration or a reform actually moved, and to
+    check that it moved nothing else. A parameter can differ in value or in
+    shape; a shape change means the two runs are not the same model, so the
+    two cases are marked apart.
+
+    Args:
+        p (OG-Core Specifications object): the reference parameters
+        p2 (OG-Core Specifications object): the parameters to compare
+        labels (tuple): names for the two parameterizations
+        include_title (bool): whether to include a title on the figure
+        path (str): path to save figure to
+
+    Returns:
+        fig (Matplotlib figure): the figure, if path is None
+    """
+    captions = {
+        "household": "Households",
+        "industry": "Industries",
+        "good": "Goods and consumption",
+        "government": "Government",
+        "foreign": "Rest of world",
+    }
+    colors = {
+        "same": "#E4E2DA",
+        "value": "#EF9F27",
+        "shape": "#D85A30",
+    }
+    ink = {"same": "#5F5E5A", "value": "#412402", "shape": "#FFFFFF"}
+
+    def classify(name):
+        if not hasattr(p, name) or not hasattr(p2, name):
+            return None
+        a, b = getattr(p, name), getattr(p2, name)
+        if not _differs(a, b):
+            return "same"
+        try:
+            shape_a = np.atleast_1d(np.asarray(a, dtype=float)).shape
+            shape_b = np.atleast_1d(np.asarray(b, dtype=float)).shape
+        except (TypeError, ValueError):
+            return "value"
+        return "shape" if shape_a != shape_b else "value"
+
+    rows = []
+    for block, block_names in PARAM_BLOCKS.items():
+        states = [
+            (n, classify(n))
+            for n in dict.fromkeys(block_names)
+            if classify(n) is not None
+        ]
+        rows.append((block, states))
+    n_cols = max(len(states) for _, states in rows)
+
+    margin = 4.6
+    fig, ax = plt.subplots(
+        figsize=(0.86 * (n_cols + margin) + 0.6, 0.95 * len(rows) + 1.7)
+    )
+    ax.set_xlim(-margin, n_cols + 0.2)
+    ax.set_ylim(-1.5, len(rows))
+    ax.axis("off")
+    ax.grid(False)
+
+    for r, (block, states) in enumerate(rows):
+        y = len(rows) - 1 - r
+        n_diff = sum(state != "same" for _, state in states)
+        ax.text(
+            -0.35,
+            y + 0.16,
+            captions[block],
+            ha="right",
+            va="center",
+            fontsize=10,
+            color=NODE_STYLES[block]["tc"],
+        )
+        ax.text(
+            -0.35,
+            y - 0.20,
+            f"{n_diff} of {len(states)} differ",
+            ha="right",
+            va="center",
+            fontsize=8,
+            color="#5F5E5A",
+        )
+        for c, (name, state) in enumerate(states):
+            ax.add_patch(
+                FancyBboxPatch(
+                    (c + 0.06, y - 0.34),
+                    0.88,
+                    0.68,
+                    boxstyle="round,pad=0,rounding_size=0.06",
+                    linewidth=0,
+                    facecolor=colors[state],
+                    zorder=2,
+                )
+            )
+            ax.text(
+                c + 0.5,
+                y,
+                _wrap_param(name),
+                ha="center",
+                va="center",
+                fontsize=6.6,
+                linespacing=1.25,
+                color=ink[state],
+                zorder=3,
+            )
+
+    ax.text(
+        -margin + 0.1,
+        -1.15,
+        f"Comparing {labels[0]} with {labels[1]}",
+        fontsize=8.5,
+        color="#5F5E5A",
+    )
+    ax.legend(
+        handles=[
+            Patch(facecolor=colors["shape"], label="Dimensions differ"),
+            Patch(facecolor=colors["value"], label="Value differs"),
+            Patch(facecolor=colors["same"], label="Identical"),
+        ],
+        loc="lower left",
+        bbox_to_anchor=(0.0, -0.02),
+        ncol=3,
+        frameon=False,
+        fontsize=9,
+    )
+    if include_title:
+        ax.set_title("What the two parameterizations disagree on", fontsize=13)
+
+    if path is None:
+        return fig
+    fig_path = os.path.join(path)
+    plt.savefig(fig_path, bbox_inches="tight", dpi=300)
+    plt.close()
+
+
 def _wrap_param(name, width=11):
     """Break a parameter name at underscores so it fits inside a tile."""
     lines, current = [], ""
