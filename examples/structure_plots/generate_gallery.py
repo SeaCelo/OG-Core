@@ -119,6 +119,22 @@ def main():
 
     p = build_parameters(args.package, args.params, args.overlay)
     industries, goods = read_labels(args.package)
+    # A package's label lists describe its multi-industry setup; when the
+    # parameterization being drawn has a different M or I (e.g. the
+    # single-industry default of a package that also ships a multi-industry
+    # overlay), fall back to generic labels rather than erroring.
+    if industries is not None and len(industries) != p.M:
+        print(
+            f"note: {len(industries)} industry labels for M = {p.M}; "
+            "using generic labels"
+        )
+        industries = None
+    if goods is not None and len(goods) != p.I:
+        print(
+            f"note: {len(goods)} good labels for I = {p.I}; "
+            "using generic labels"
+        )
+        goods = None
     plt.style.use("ogcore.OGcorePlots")
 
     written = structure_plots.make_visuals(
