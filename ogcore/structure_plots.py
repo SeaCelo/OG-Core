@@ -81,56 +81,109 @@ NODE_STYLES = {
 # Which parameters govern each box in the structural diagrams. Used to report
 # how much of a box rests on country-calibrated values and how much is still
 # inherited from OG-Core's own defaults. The market boxes are clearing
-# conditions rather than calibrated objects, so they hold no parameters.
-PARAM_BLOCKS = {
-    "household": [
-        "S",
-        "J",
-        "lambdas",
-        "e",
-        "beta_annual",
-        "sigma",
-        "frisch",
-        "chi_n",
-        "chi_b",
-        "g_y_annual",
-        "ltilde",
-    ],
-    "industry": [
-        "M",
-        "gamma",
-        "epsilon",
-        "Z",
-        "delta_annual",
-        "gamma_g",
-        "tau_b",
-        "delta_tau_annual",
-    ],
-    "good": ["I", "alpha_c", "io_matrix", "tau_c", "c_min"],
-    "government": [
-        "alpha_G",
-        "alpha_T",
-        "alpha_I",
-        "initial_debt_ratio",
-        "r_gov_scale",
-        "r_gov_shift",
-        "tau_bq",
-        "tau_p",
-        "h_wealth",
-        "m_wealth",
-        "p_wealth",
-        "pension_system",
-    ],
-    "foreign": [
-        "zeta_K",
-        "zeta_D",
-        "alpha_RM_1",
-        "alpha_RM_T",
-        "alpha_FA",
-        "world_int_rate_annual",
-        "initial_foreign_debt_ratio",
-    ],
+# OG-Core files every parameter under a `section_1` in its own metadata, and
+# those sections are the blocks these figures use. Deriving them beats a list
+# kept here: a hand-written list silently omits whatever a build adds, which
+# is how a country's calibrated initial-wealth anchor went missing from the
+# figure entirely.
+#
+# Solution parameters are the one section left out. Root-finder choices,
+# tolerances, iteration caps and initial guesses are numerical settings, not
+# statements about a country, so calling them "calibrated" or "default" would
+# say nothing. The exclusion is named on the figure rather than left implicit.
+EXCLUDED_SECTIONS = ("Model Solution Parameters",)
+
+# Which box of the circular flow each section's parameters belong to. Sections
+# with no box -- model-wide settings such as the start year -- still appear in
+# the calibration figure; they just have nowhere to sit in the flow diagram.
+SECTION_BOXES = {
+    "Household Parameters": "household",
+    "Demographic Parameters": "household",
+    "Economic Assumptions": "household",
+    "Firm Parameters": "industry",
+    "Fiscal Policy Parameters": "government",
+    "Government Parameters": "government",
+    "Open Economy Parameters": "foreign",
 }
+
+
+def parameter_sections(exclude=EXCLUDED_SECTIONS):
+    """
+    Group a build's parameters by the section OG-Core files them under.
+
+    Read from the loaded OG-Core's own metadata, so coverage follows whatever
+    build is in play instead of drifting away from a list kept here.
+
+    Args:
+        exclude (tuple): section names to leave out, defaulting to the
+            solution parameters
+
+    Returns:
+        (dict): section name mapped to its parameter names, in the order the
+            metadata lists them
+    """
+    import importlib.resources
+    import json
+
+    with (
+        importlib.resources.files("ogcore")
+        .joinpath("default_parameters.json")
+        .open() as f
+    ):
+        meta = json.load(f)
+
+    sections = {}
+    for name, entry in meta.items():
+        if not isinstance(entry, dict) or "section_1" not in entry:
+            continue
+        section = entry["section_1"] or "Other Parameters"
+        if section in exclude:
+            continue
+        sections.setdefault(section, []).append(name)
+    # Largest sections first, so the calibration figure leads with the block
+    # carrying the most decisions.
+    return dict(sorted(sections.items(), key=lambda kv: -len(kv[1])))
+
+
+def parameter_symbols():
+    """
+    The symbol OG-Core's metadata gives each parameter, where it gives one.
+
+    `param_notation` is already LaTeX, which Matplotlib's mathtext renders, so
+    the figures use the notation the documentation uses rather than a
+    transcription of it.
+
+    Two kinds of notation are skipped rather than drawn. Mathtext cannot parse
+    `\\texttt`, and every parameter using it gives its own name in monospace
+    anyway, which is what the plain-name fallback already shows. Notation that
+    arrives without its delimiters gets them, since a few entries omit them.
+
+    Returns:
+        (dict): parameter name mapped to its notation, omitting the parameters
+            that have none and those Mathtext would refuse
+    """
+    import importlib.resources
+    import json
+
+    with (
+        importlib.resources.files("ogcore")
+        .joinpath("default_parameters.json")
+        .open() as f
+    ):
+        meta = json.load(f)
+
+    symbols = {}
+    for name, entry in meta.items():
+        if not isinstance(entry, dict):
+            continue
+        notation = entry.get("param_notation")
+        if not notation or "\\texttt" in notation:
+            continue
+        if not notation.startswith("$"):
+            notation = f"${notation}$"
+        symbols[name] = notation
+    return symbols
+
 
 # Fill colors for the calibration status of a parameter, used where status is
 # the subject of the figure.
@@ -155,54 +208,15 @@ STATUS_INK = {
     "missing": "#5F5E5A",
 }
 
-# The symbol each parameter goes by in the theory documentation, so a chip
-# says which parameter it stands for and not merely whether it was
-# calibrated. Parameters with no established symbol get a short abbreviation.
-PARAM_SYMBOLS = {
-    "S": "$S$",
-    "J": "$J$",
-    "lambdas": r"$\lambda_j$",
-    "e": "$e$",
-    "beta_annual": r"$\beta$",
-    "sigma": r"$\sigma$",
-    "frisch": r"$\nu$",
-    "chi_n": r"$\chi^n$",
-    "chi_b": r"$\chi^b$",
-    "g_y_annual": "$g_y$",
-    "ltilde": r"$\tilde{l}$",
-    "M": "$M$",
-    "gamma": r"$\gamma$",
-    "epsilon": r"$\varepsilon$",
-    "Z": "$Z$",
-    "delta_annual": r"$\delta$",
-    "gamma_g": r"$\gamma_g$",
-    "tau_b": r"$\tau_b$",
-    "delta_tau_annual": r"$\delta_\tau$",
-    "I": "$I$",
-    "alpha_c": r"$\alpha_c$",
-    "io_matrix": r"$\pi$",
-    "tau_c": r"$\tau_c$",
-    "c_min": "$c_{min}$",
-    "alpha_G": r"$\alpha_G$",
-    "alpha_T": r"$\alpha_T$",
-    "alpha_I": r"$\alpha_I$",
-    "initial_debt_ratio": "$D/Y$",
-    "r_gov_scale": "$r_{sc}$",
-    "r_gov_shift": "$r_{sh}$",
-    "tau_bq": r"$\tau_{bq}$",
-    "tau_p": r"$\tau_p$",
-    "h_wealth": "$h_w$",
-    "m_wealth": "$m_w$",
-    "p_wealth": "$p_w$",
-    "pension_system": "pens",
-    "zeta_K": r"$\zeta_K$",
-    "zeta_D": r"$\zeta_D$",
-    "alpha_RM_1": r"$\alpha_{RM}^1$",
-    "alpha_RM_T": r"$\alpha_{RM}^T$",
-    "alpha_FA": r"$\alpha_{FA}$",
-    "world_int_rate_annual": "$r^*$",
-    "initial_foreign_debt_ratio": "$D_f/Y$",
-}
+
+_SYMBOLS_CACHE = {}
+
+
+def _symbols():
+    """Cache the metadata's notation, so it is read once per process."""
+    if not _SYMBOLS_CACHE:
+        _SYMBOLS_CACHE.update(parameter_symbols())
+    return _SYMBOLS_CACHE
 
 
 def _differs(a, b):
@@ -257,7 +271,8 @@ def calibration_status(p):
     """
     from ogcore.parameters import Specifications
 
-    names = [n for block in PARAM_BLOCKS.values() for n in block]
+    sections = parameter_sections()
+    names = [n for members in sections.values() for n in members]
     reference = Specifications()
 
     status = {}
@@ -270,7 +285,7 @@ def calibration_status(p):
             status[name] = "default"
 
     blocks = {}
-    for block, block_names in PARAM_BLOCKS.items():
+    for block, block_names in sections.items():
         present = [
             n for n in dict.fromkeys(block_names) if status[n] != "missing"
         ]
@@ -575,28 +590,51 @@ def summarize_structure(p, industry_names=None, good_names=None):
     }
 
 
-def _chip_grid(ax, x, y, w, status, chip_w_max=3.4, chip_h=1.45):
+def _chip_grid(ax, x, y, w, h, status):
     """
-    Draw the calibration chips along the bottom of a box, one per parameter,
-    each labelled with the parameter's symbol.
+    Draw the calibration chips along the bottom of a box, one per parameter.
 
-    Columns are chosen from the width available, so a wide box gets one row
-    and a narrow one wraps. Returns the vertical band consumed, which the
-    caller keeps clear of its own text.
+    The chips are an annotation on the box, not its subject, so they are given
+    a fixed share of its height and sized to fit inside it. Where a chip is
+    large enough to carry a symbol it does; where a block holds too many
+    parameters for that -- fiscal policy runs to seventy -- the chips shrink to
+    plain squares. That keeps the proportion of calibrated to inherited honest
+    at a glance, and leaves identifying individual parameters to
+    `plot_calibration_status`, which has room for it.
 
     Args:
+        w, h (float): the box's width and height
         status (list): (parameter name, status) pairs, in reading order
 
     Returns:
         (float): height taken up, in axis units
     """
-    pad, col_gap, row_gap = 1.2, 0.3, 0.32
+    n = len(status)
+    pad, col_gap, row_gap = 1.2, 0.3, 0.28
     track = w - 2 * pad
-    max_cols = max(1, int((track + col_gap) // (2.6 + col_gap)))
-    n_rows = int(np.ceil(len(status) / max_cols))
-    cols = int(np.ceil(len(status) / n_rows))
-    chip_w = min(chip_w_max, (track - col_gap * (cols - 1)) / cols)
+    band_max = h * 0.42
 
+    # Largest chip that fits every parameter inside the band allowed.
+    for chip_w, chip_h in (
+        (3.4, 1.45),
+        (2.6, 1.30),
+        (2.0, 1.10),
+        (1.4, 0.80),
+        (1.0, 0.60),
+        (0.7, 0.42),
+    ):
+        cols = max(1, int((track + col_gap) // (chip_w + col_gap)))
+        n_rows = int(np.ceil(n / cols))
+        band = n_rows * chip_h + (n_rows - 1) * row_gap
+        if band <= band_max:
+            break
+    # Notation varies a lot in width -- $S$ against $\beta_{j,ann}$ -- so a
+    # chip only carries a symbol at the sizes the longest of them fits.
+    labelled = chip_w >= 2.6 and chip_h >= 1.25
+    label_size = 6.2 if chip_w >= 3.4 else 5.4
+
+    cols = max(1, min(cols, n))
+    n_rows = int(np.ceil(n / cols))
     grid_w = cols * chip_w + col_gap * (cols - 1)
     x0 = x + (w - grid_w) / 2
     for k, (name, state) in enumerate(status):
@@ -608,22 +646,23 @@ def _chip_grid(ax, x, y, w, status, chip_w_max=3.4, chip_h=1.45):
                 (cx, cy),
                 chip_w,
                 chip_h,
-                boxstyle="round,pad=0,rounding_size=0.18",
+                boxstyle=f"round,pad=0,rounding_size={min(0.18, chip_h / 4)}",
                 linewidth=0,
                 facecolor=STATUS_TINTS[state],
                 zorder=5,
             )
         )
-        ax.text(
-            cx + chip_w / 2,
-            cy + chip_h / 2,
-            PARAM_SYMBOLS.get(name, name),
-            ha="center",
-            va="center",
-            fontsize=6.2,
-            color=STATUS_INK[state],
-            zorder=6,
-        )
+        if labelled:
+            ax.text(
+                cx + chip_w / 2,
+                cy + chip_h / 2,
+                _symbols().get(name, _wrap_param(name)),
+                ha="center",
+                va="center",
+                fontsize=label_size,
+                color=STATUS_INK[state],
+                zorder=6,
+            )
     return 0.8 + n_rows * chip_h + (n_rows - 1) * row_gap + 0.6
 
 
@@ -664,7 +703,7 @@ def _box(
             zorder=3,
         )
     )
-    band = _chip_grid(ax, x, y, w, status) if status else 0.0
+    band = _chip_grid(ax, x, y, w, h, status) if status else 0.0
     if status:
         n_cal = sum(state == "calibrated" for _, state in status)
         ax.text(
@@ -789,14 +828,16 @@ def plot_circular_flow(
 
     if show_calibration:
         status, _ = calibration_status(p)
-        blocks = {
-            block: [
+        blocks = {}
+        for section, names in parameter_sections().items():
+            box = SECTION_BOXES.get(section)
+            if box is None:
+                continue
+            blocks.setdefault(box, []).extend(
                 (n, status[n])
                 for n in dict.fromkeys(names)
-                if status[n] != "missing"
-            ]
-            for block, names in PARAM_BLOCKS.items()
-        }
+                if status.get(n, "missing") != "missing"
+            )
     else:
         blocks = {}
 
@@ -1091,77 +1132,99 @@ def plot_calibration_status(
     """
     status, blocks = calibration_status(p)
 
-    captions = {
-        "household": "Households",
-        "industry": "Industries",
-        "good": "Goods and consumption",
-        "government": "Government",
-        "foreign": "Rest of world",
-    }
-    rows = []
-    for block, block_names in PARAM_BLOCKS.items():
-        names = [
-            n for n in dict.fromkeys(block_names) if status[n] != "missing"
-        ]
-        rows.append((block, names))
-    n_cols = max(len(names) for _, names in rows)
+    # Sections are OG-Core's own, so a caption is the section name minus the
+    # word every one of them ends with.
+    def caption(section):
+        return section.replace(" Parameters", "")
 
-    # A left margin of its own so the block captions never run over a tile.
-    margin = 4.6
+    rows = [
+        (
+            section,
+            [n for n in dict.fromkeys(names) if status[n] != "missing"],
+        )
+        for section, names in parameter_sections().items()
+    ]
+
+    # Sections differ in size by an order of magnitude -- fiscal policy carries
+    # most of the parameters -- so a section wraps across as many lines as it
+    # needs rather than setting the width of the whole figure.
+    per_line = 12
+    layout, y = [], 0.0
+    for section, names in rows:
+        lines = [
+            names[i : i + per_line] for i in range(0, len(names), per_line)
+        ] or [[]]
+        layout.append((section, names, y, lines))
+        y -= len(lines) * 1.0 + 0.55
+    height = -y
+
+    margin = 5.4
     fig, ax = plt.subplots(
-        figsize=(0.86 * (n_cols + margin) + 0.6, 0.95 * len(rows) + 1.5)
+        figsize=(0.86 * (per_line + margin) + 0.6, 0.62 * height + 1.6)
     )
-    ax.set_xlim(-margin, n_cols + 0.2)
-    ax.set_ylim(-1.4, len(rows))
+    ax.set_xlim(-margin, per_line + 0.2)
+    ax.set_ylim(y - 0.5, 1.2)
     ax.axis("off")
     ax.grid(False)
 
-    for r, (block, names) in enumerate(rows):
-        y = len(rows) - 1 - r
-        n_cal, n_present = blocks[block]
+    for section, names, top, lines in layout:
+        n_cal, n_present = blocks[section]
         ax.text(
             -0.35,
-            y + 0.16,
-            captions[block],
+            top - 0.10,
+            caption(section),
             ha="right",
             va="center",
             fontsize=10,
-            color=NODE_STYLES[block]["tc"],
+            color="#26215C",
         )
         ax.text(
             -0.35,
-            y - 0.20,
+            top - 0.46,
             f"{n_cal} of {n_present} calibrated",
             ha="right",
             va="center",
             fontsize=8,
             color="#5F5E5A",
         )
-        for c, name in enumerate(names):
-            ax.add_patch(
-                FancyBboxPatch(
-                    (c + 0.06, y - 0.34),
-                    0.88,
-                    0.68,
-                    boxstyle="round,pad=0,rounding_size=0.06",
-                    linewidth=0,
-                    facecolor=STATUS_COLORS[status[name]],
-                    alpha=0.85 if status[name] == "calibrated" else 0.95,
-                    zorder=2,
+        for row_index, line in enumerate(lines):
+            row_y = top - row_index * 1.0
+            for c, name in enumerate(line):
+                ax.add_patch(
+                    FancyBboxPatch(
+                        (c + 0.06, row_y - 0.62),
+                        0.88,
+                        0.68,
+                        boxstyle="round,pad=0,rounding_size=0.06",
+                        linewidth=0,
+                        facecolor=STATUS_COLORS[status[name]],
+                        alpha=0.85 if status[name] == "calibrated" else 0.95,
+                        zorder=2,
+                    )
                 )
-            )
-            ax.text(
-                c + 0.5,
-                y,
-                _wrap_param(name),
-                ha="center",
-                va="center",
-                fontsize=6.6,
-                linespacing=1.25,
-                color="white" if status[name] == "calibrated" else "#412402",
-                zorder=3,
-            )
+                ax.text(
+                    c + 0.5,
+                    row_y - 0.28,
+                    _wrap_param(name, width=9),
+                    ha="center",
+                    va="center",
+                    fontsize=5.6,
+                    linespacing=1.2,
+                    color="white"
+                    if status[name] == "calibrated"
+                    else "#412402",
+                    zorder=3,
+                )
 
+    ax.text(
+        -margin + 0.1,
+        y + 0.05,
+        "Sections are OG-Core's own; "
+        + ", ".join(EXCLUDED_SECTIONS).replace(" Parameters", "")
+        + " excluded as numerical settings, not calibration choices",
+        fontsize=7.5,
+        color="#8a8a84",
+    )
     ax.legend(
         handles=[
             Patch(
@@ -1177,8 +1240,8 @@ def plot_calibration_status(
         fontsize=9,
     )
     ax.text(
-        n_cols + 0.2,
-        -1.15,
+        per_line + 0.2,
+        y + 0.05,
         _baseline_note(status),
         ha="right",
         va="center",

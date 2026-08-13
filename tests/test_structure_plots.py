@@ -107,7 +107,7 @@ def test_calibration_status_flags_changed_values(default_params):
     p.update_specifications({"alpha_T": [0.2]})
     status, blocks = structure_plots.calibration_status(p)
     assert status["alpha_T"] == "calibrated"
-    assert blocks["government"][0] == 1
+    assert blocks["Fiscal Policy Parameters"][0] == 1
 
 
 def test_broadcast_across_dimensions_is_not_a_calibration(default_params):
@@ -448,3 +448,57 @@ def test_baseline_note_reports_absent_parameters(default_params):
     assert "1 not present in this build" in structure_plots._baseline_note(
         absent
     )
+
+
+def test_sections_cover_the_build_except_the_exclusions():
+    """
+    Coverage follows the loaded build's own metadata, so nothing a build
+    defines can go missing the way a hand-written list let it.
+    """
+    sections = structure_plots.parameter_sections()
+    covered = {n for names in sections.values() for n in names}
+    everything = set(Specifications().keys())
+
+    excluded = everything - covered
+    assert covered <= everything
+    assert excluded, "the solution parameters should be held back"
+    for name in excluded:
+        assert name not in covered
+
+    # Nothing is silently dropped: every parameter is either covered or in an
+    # excluded section, never neither.
+    assert structure_plots.EXCLUDED_SECTIONS
+    assert len(covered) + len(excluded) == len(everything)
+
+
+def test_a_calibrated_parameter_cannot_go_missing(default_params):
+    """
+    The regression this replaced a literal list to prevent: a parameter a
+    country calibrates has to appear somewhere in the status report.
+    """
+    status, _ = structure_plots.calibration_status(default_params)
+    for name in Specifications().keys():
+        if name in status:
+            continue
+        section = None
+        # Anything absent from the report must belong to an excluded section.
+        import importlib.resources
+        import json
+
+        with (
+            importlib.resources.files("ogcore")
+            .joinpath("default_parameters.json")
+            .open()
+        ) as f:
+            section = json.load(f).get(name, {}).get("section_1")
+        assert section in structure_plots.EXCLUDED_SECTIONS, name
+
+
+def test_symbols_come_from_the_metadata_and_are_renderable():
+    """
+    Notation is OG-Core's own, minus the entries Mathtext cannot parse.
+    """
+    symbols = structure_plots.parameter_symbols()
+    assert symbols
+    assert all("\\texttt" not in v for v in symbols.values())
+    assert all(v.startswith("$") and v.endswith("$") for v in symbols.values())

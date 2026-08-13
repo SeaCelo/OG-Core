@@ -47,7 +47,7 @@ Take the figure and the baseline together, or not at all.
 | --- | --- |
 | `phl_circular_flow.png` | The institutional linkages. Which agents exist, which flows connect them, and which tax, transfer and cross-border channels the parameterization switches on. The chips in each box carry one parameter each, tinted by whether the country calibrated it. |
 | `phl_io_heatmap.png` | The input-output bridge matrix: how much of each industry's output composes each consumption good. |
-| `phl_calibration_status.png` | Every structural parameter, coloured by whether its value differs from the one OG-Core ships. Spreading OG-Core's value across new industries counts as inherited, not calibrated. |
+| `phl_calibration_status.png` | Every parameter the build defines, grouped by OG-Core's own sections and coloured by whether its value differs from the one OG-Core ships. Spreading OG-Core's value across new industries counts as inherited, not calibrated. Solution parameters are held back, being numerical settings rather than statements about a country. |
 | `phl_calibration_fit.png` | How close the solved model lands to the moments it targets, from `phl_moments.csv`. |
 | `phl_mermaid.png` | The same structure as a graph, rendered from Mermaid source. |
 
