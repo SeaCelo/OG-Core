@@ -281,6 +281,54 @@ def calibration_status(p):
     return status, blocks
 
 
+def calibration_baseline():
+    """
+    Describe the OG-Core build a calibration is being judged against.
+
+    `calibration_status` calls a parameter calibrated when its value differs
+    from the one OG-Core ships, so every verdict it reaches is relative to
+    whichever build supplied that comparison. This is not a fine point. The
+    same country model read against two builds can come out meaningfully more
+    or less calibrated, and two builds can report the same version string
+    while carrying different parameter sets -- a released version and a local
+    integration build of the same number, say. Judged against one OG-Core
+    build a country's government block came out 7 of 12 calibrated, and
+    against another 10 of 12, on identical country parameters.
+
+    The figures print this on themselves so that difference is visible rather
+    than silent. The parameter count discriminates builds that share a
+    version.
+
+    Returns:
+        (dict): `version` reported by the loaded OG-Core, and `parameters`,
+            the number of parameters its build defines
+    """
+    import ogcore
+    from ogcore.parameters import Specifications
+
+    try:
+        count = len(list(Specifications().keys()))
+    except Exception:
+        count = None
+    return {
+        "version": getattr(ogcore, "__version__", "unknown"),
+        "parameters": count,
+    }
+
+
+def _baseline_note(status=None):
+    """One line naming the build a calibration verdict was reached against."""
+    baseline = calibration_baseline()
+    note = f"Judged against OG-Core {baseline['version']}"
+    if baseline["parameters"] is not None:
+        note += f", {baseline['parameters']} parameters"
+    if status:
+        absent = sum(state == "missing" for state in status.values())
+        if absent:
+            note += f"; {absent} not present in this build"
+    return note
+
+
 def _active(value, tol=0.0):
     """
     Whether a channel is switched on anywhere in a parameter's time path.
@@ -919,6 +967,18 @@ def plot_circular_flow(
         handlelength=1.6,
         columnspacing=1.2,
     )
+    if show_calibration:
+        # The chips are a verdict against a particular OG-Core build, so the
+        # figure names it.
+        ax.text(
+            96,
+            1.0,
+            _baseline_note(status),
+            ha="right",
+            va="center",
+            fontsize=7,
+            color="#8a8a84",
+        )
     if include_title:
         ax.set_title("Model structure", fontsize=13)
 
@@ -1115,6 +1175,15 @@ def plot_calibration_status(
         ncol=2,
         frameon=False,
         fontsize=9,
+    )
+    ax.text(
+        n_cols + 0.2,
+        -1.15,
+        _baseline_note(status),
+        ha="right",
+        va="center",
+        fontsize=7.5,
+        color="#8a8a84",
     )
     if include_title:
         ax.set_title("Calibration coverage by block", fontsize=13)

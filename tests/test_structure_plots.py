@@ -425,3 +425,26 @@ def test_make_visuals_honors_the_figure_format(
     for path in out.values():
         assert path.endswith(".svg")
         assert os.path.exists(path)
+
+
+def test_calibration_baseline_names_the_build():
+    """
+    A calibration verdict is relative to the OG-Core it was judged against, so
+    the baseline has to be reportable.
+    """
+    baseline = structure_plots.calibration_baseline()
+    assert baseline["version"]
+    # The parameter count is what separates two builds sharing a version.
+    assert baseline["parameters"] is None or baseline["parameters"] > 0
+
+
+def test_baseline_note_reports_absent_parameters(default_params):
+    status, _ = structure_plots.calibration_status(default_params)
+    plain = structure_plots._baseline_note(status)
+    assert "Judged against OG-Core" in plain
+
+    absent = dict(status)
+    absent["sigma"] = "missing"
+    assert "1 not present in this build" in structure_plots._baseline_note(
+        absent
+    )
