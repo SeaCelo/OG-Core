@@ -10,18 +10,38 @@ The figures here were generated from the OG-PHL multi-industry calibration
 
 ```
 cd ~/Projects/OG-PHL
-PYTHONPATH=~/Projects/OG-Core .venv/bin/python \
-    ~/Projects/OG-Core/examples/structure_plots/generate_gallery.py \
+.venv/bin/python \
+    <this-checkout>/examples/structure_plots/generate_gallery.py \
     --package ogphl \
     --params ogphl_default_parameters.json \
     --overlay ogphl_multisector_default_parameters.json \
-    --moments ~/Projects/OG-Core/examples/structure_plots/phl_moments.csv \
-    --out ~/Projects/OG-Core/examples/structure_plots --prefix phl_
+    --moments <this-checkout>/examples/structure_plots/phl_moments.csv \
+    --out <this-checkout>/examples/structure_plots --prefix phl_
 ```
 
 Swap `ogphl` for `ogzaf`, `ogidn`, `ogbra` or `ogeth`, and drop `--overlay` for
 a single-industry model. Each country's data stays in its own repository; the
 script only reads it.
+
+Note what the command does **not** do: it sets no `PYTHONPATH` and installs
+nothing. It runs in the country's own environment, so OG-Core is whichever
+build that model is pinned to, and the script loads `structure_plots` by path
+from the checkout it ships in. That combination is deliberate, and it is the
+only one that works. A country calibration frequently needs an OG-Core newer
+than the one carrying these visuals -- OG-PHL's parameters require
+`initial_wealth_ratio`, and an OG-Core without it refuses the file outright --
+while the build that has it does not carry this module. Shadowing OG-Core with
+`PYTHONPATH`, or installing this branch into the country's environment, breaks
+one half or the other. Neither is necessary.
+
+## Read the baseline before reading the calibration figures
+
+`calibration_status` calls a parameter calibrated when its value differs from
+the one OG-Core ships, so its verdict is relative to the build that supplied
+the comparison, and both calibration figures print that build on themselves.
+This is not a footnote. The same Philippine parameters read 7 of 12 calibrated
+in the government block against one OG-Core build and 10 of 12 against another.
+Take the figure and the baseline together, or not at all.
 
 | File | What it shows |
 | --- | --- |

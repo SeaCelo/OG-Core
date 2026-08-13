@@ -5,15 +5,20 @@ Run it from the country repo's own environment, because it reads that
 package's parameter files and its industry and consumption-good labels:
 
     cd ~/Projects/OG-PHL
-    PYTHONPATH=~/Projects/OG-Core .venv/bin/python \
-        ~/Projects/OG-Core/examples/structure_plots/generate_gallery.py \
+    .venv/bin/python \
+        <this-checkout>/examples/structure_plots/generate_gallery.py \
         --package ogphl \
         --params ogphl_default_parameters.json \
         --overlay ogphl_multisector_default_parameters.json \
-        --moments ~/Projects/OG-Core/examples/structure_plots/phl_moments.csv \
+        --moments <this-checkout>/examples/structure_plots/phl_moments.csv \
         --out . --prefix phl_
 
-The figures in this directory were produced by exactly that command, against
+No PYTHONPATH, and nothing installed: OG-Core stays whichever build the
+country model is pinned to, and this script loads `structure_plots` by path
+from its own checkout. See `load_structure_plots` for why that combination is
+the one that works.
+
+The figures in examples/structure_plots were produced by that command against
 the OG-PHL multi-industry calibration.
 
 The Mermaid graph is written as a PNG, which needs the Mermaid CLI
@@ -24,6 +29,7 @@ write the source instead and skip that requirement.
 import argparse
 import importlib
 import importlib.resources
+import importlib.util
 import json
 import os
 
@@ -32,8 +38,39 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from ogcore import structure_plots  # noqa: E402
 from ogcore.parameters import Specifications  # noqa: E402
+
+
+def load_structure_plots():
+    """
+    Load the `structure_plots` module that ships with this checkout.
+
+    Taking it by path, rather than importing it from the installed OG-Core, is
+    deliberate. A country model is normally pinned to one OG-Core build, and
+    that build may not carry this module, while this checkout's own OG-Core may
+    be too old to read the country's parameters -- so neither half works alone.
+    Using the module from here and letting its own
+    `from ogcore.parameters import Specifications` resolve to the installed
+    build gives the combination that does work, and installs nothing anywhere.
+
+    Falls back to the installed module once this one ships inside OG-Core.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.normpath(
+        os.path.join(
+            here, os.pardir, os.pardir, "ogcore", "structure_plots.py"
+        )
+    )
+    if not os.path.exists(path):
+        from ogcore import structure_plots
+
+        return structure_plots
+    spec = importlib.util.spec_from_file_location(
+        "ogcore_structure_plots_local", path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_json(package, name):
@@ -117,6 +154,7 @@ def main():
     )
     args = parser.parse_args()
 
+    structure_plots = load_structure_plots()
     p = build_parameters(args.package, args.params, args.overlay)
     industries, goods = read_labels(args.package)
     # A package's label lists describe its multi-industry setup; when the
@@ -148,7 +186,11 @@ def main():
         mermaid_fmt=args.mermaid_format,
     )
 
-    print(f"M = {p.M}, I = {p.I}")
+    baseline = structure_plots.calibration_baseline()
+    print(
+        f"M = {p.M}, I = {p.I}; judged against OG-Core "
+        f"{baseline['version']}, {baseline['parameters']} parameters"
+    )
     for name, path in written.items():
         print(f"  {name:20} {os.path.basename(path)}")
 
